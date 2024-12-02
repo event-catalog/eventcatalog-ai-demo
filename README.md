@@ -7,7 +7,7 @@ This demo uses [git2txt](https://github.com/addyosmani/git2txt) to extract the t
 How to run the demo:
 
 1. Clone the repo or [Create your own EventCatalog](https://www.eventcatalog.dev/)
-2. Run npx `git2txt https://github.com/event-catalog/eventcatalog-ai-demo` (replace with your repo)
+2. Run `npx git2txt https://github.com/event-catalog/eventcatalog-ai-demo` (replace with your repo)
 3. Open your AI Agent and add the context from the previous step.
 4. Ask questions about your EventCatalog!
 
