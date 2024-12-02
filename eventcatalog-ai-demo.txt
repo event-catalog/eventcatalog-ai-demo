@@ -1,0 +1,4643 @@
+
+================================================================================
+File: .dockerignore
+Size: 92 B
+================================================================================
+
+.eventcatalog-core/
+.git/
+dist/
+node_modules/
+.gitignore
+.dockerignore
+Dockerfile
+README.md
+
+
+================================================================================
+File: .gitignore
+Size: 243 B
+================================================================================
+
+# Dependencies
+/node_modules
+
+# Production
+/build
+
+# Generated files
+.astro
+out
+dist
+
+
+# Misc
+.DS_Store
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+.eventcatalog-core
+
+================================================================================
+File: Dockerfile
+Size: 461 B
+================================================================================
+
+## Stage 1: Build the app
+FROM node:lts AS build
+
+WORKDIR /app
+
+# Install dependencies
+COPY package.json package-lock.json ./
+RUN npm install
+
+# Copy source code
+COPY . .
+
+# Fix for Astro in Docker: https://github.com/withastro/astro/issues/2596
+ENV NODE_OPTIONS=--max_old_space_size=2048
+# Build the app
+RUN npm run build
+
+
+## Stage 2: Serve app with httpd server
+FROM httpd:2.4
+
+# Copy built app to serve
+COPY --from=build /app/dist /usr/local/apache2/htdocs
+
+
+================================================================================
+File: README.md
+Size: 801 B
+================================================================================
+
+# EventCatalog AI Demo
+
+This is a demo of how to use AI to ask questions about your EventCatalog.
+
+This demo uses [git2txt](https://github.com/addyosmani/git2txt) to extract the text from the git repo and uses this for the LLM context.
+
+How to run the demo:
+
+1. Clone the repo or [Create your own EventCatalog](https://www.eventcatalog.dev/)
+2. Run npx `git2txt https://github.com/event-catalog/eventcatalog-ai-demo` (replace with your repo)
+3. Open your AI Agent and add the context from the previous step.
+4. Ask questions about your EventCatalog!
+
+## Get these features with EventCatalog
+
+We are working on [EventCatalog Studio](https://studio.eventcatalog.dev/), a visual designer for event-driven architectures.
+
+You can sign up for the beta [here](https://eventcatalog.dev/studio).
+
+License: MIT
+
+================================================================================
+File: channels/inventory.{env}.events/index.md
+Size: 4.88 kB
+================================================================================
+
+---
+id: inventory.{env}.events
+name: Inventory Events Channel
+version: 1.0.0
+summary: |
+  Central event stream for all inventory-related events including stock updates, allocations, and adjustments
+owners:
+  - dboyne
+address: inventory.{env}.events
+protocols: 
+  - kafka
+
+parameters:
+  env:
+    enum:
+      - dev
+      - sit
+      - prod
+    description: 'Environment to use'
+---
+
+### Overview
+The Inventory Events channel is the central stream for all inventory-related events across the system. This includes stock level changes, inventory allocations, adjustments, and stocktake events. Events for a specific SKU are guaranteed to be processed in sequence when using productId as the partition key.
+
+<ChannelInformation />
+
+### Publishing and Subscribing to Events
+
+#### Publishing Example
+```python
+from kafka import KafkaProducer
+import json
+from datetime import datetime
+
+# Kafka configuration
+bootstrap_servers = ['localhost:9092']
+topic = f'inventory.{env}.events'
+
+# Create a Kafka producer
+producer = KafkaProducer(
+    bootstrap_servers=bootstrap_servers,
+    value_serializer=lambda v: json.dumps(v).encode('utf-8')
+)
+
+# Example inventory update event
+inventory_event = {
+    "eventType": "STOCK_LEVEL_CHANGED",
+    "timestamp": datetime.utcnow().isoformat(),
+    "version": "1.0",
+    "payload": {
+        "productId": "PROD-456",
+        "locationId": "WH-123",
+        "previousQuantity": 100,
+        "newQuantity": 95,
+        "changeReason": "ORDER_FULFILLED",
+        "unitOfMeasure": "EACH",
+        "batchInfo": {
+            "batchId": "BATCH-789",
+            "expiryDate": "2025-12-31"
+        }
+    },
+    "metadata": {
+        "source": "warehouse_system",
+        "correlationId": "inv-xyz-123",
+        "userId": "john.doe"
+    }
+}
+
+# Send the message - using productId as key for partitioning
+producer.send(
+    topic, 
+    key=inventory_event['payload']['productId'].encode('utf-8'),
+    value=inventory_event
+)
+producer.flush()
+
+print(f"Inventory event sent to topic {topic}")
+
+```
+
+### Subscription example
+
+```python
+from kafka import KafkaConsumer
+import json
+from datetime import datetime
+
+class InventoryEventConsumer:
+    def __init__(self):
+        # Kafka configuration
+        self.topic = f'inventory.{env}.events'
+        self.consumer = KafkaConsumer(
+            self.topic,
+            bootstrap_servers=['localhost:9092'],
+            group_id='inventory-processor-group',
+            auto_offset_reset='earliest',
+            enable_auto_commit=False,
+            value_deserializer=lambda x: json.loads(x.decode('utf-8')),
+            key_deserializer=lambda x: x.decode('utf-8') if x else None
+        )
+
+    def process_event(self, event):
+        """Process individual inventory events based on type"""
+        event_type = event.get('eventType')
+        
+        if event_type == 'STOCK_LEVEL_CHANGED':
+            self.handle_stock_level_change(event)
+        elif event_type == 'LOW_STOCK_ALERT':
+            self.handle_low_stock_alert(event)
+        # Add more event type handlers as needed
+
+    def handle_stock_level_change(self, event):
+        """Handle stock level change events"""
+        payload = event['payload']
+        print(f"Stock level change detected for product {payload['productId']}")
+        print(f"New quantity: {payload['newQuantity']}")
+        # Add your business logic here
+
+    def handle_low_stock_alert(self, event):
+        """Handle low stock alert events"""
+        payload = event['payload']
+        print(f"Low stock alert for product {payload['productId']}")
+        print(f"Current quantity: {payload['currentQuantity']}")
+        # Add your business logic here
+
+    def start_consuming(self):
+        """Start consuming messages from the topic"""
+        try:
+            print(f"Starting consumption from topic: {self.topic}")
+            for message in self.consumer:
+                try:
+                    # Process the message
+                    event = message.value
+                    print(f"Received event: {event['eventType']} for product: {event['payload']['productId']}")
+                    
+                    # Process the event
+                    self.process_event(event)
+                    
+                    # Commit the offset after successful processing
+                    self.consumer.commit()
+                    
+                except Exception as e:
+                    print(f"Error processing message: {str(e)}")
+                    # Implement your error handling logic here
+                    # You might want to send to a DLQ (Dead Letter Queue)
+        
+        except Exception as e:
+            print(f"Consumer error: {str(e)}")
+        finally:
+            # Clean up
+            self.consumer.close()
+
+if __name__ == "__main__":
+    # Create and start the consumer
+    consumer = InventoryEventConsumer()
+    consumer.start_consuming()
+  ```
+
+================================================================================
+File: channels/orders.{env}.events/index.md
+Size: 2.06 kB
+================================================================================
+
+---
+id: orders.{env}.events
+name: Order Events Channel
+version: 1.0.1
+summary: |
+  Central event stream for all order-related events in the order processing lifecycle
+owners:
+  - dboyne
+address: orders.{env}.events
+protocols: 
+  - kafka
+
+parameters:
+  env:
+    enum:
+      - dev
+      - sit
+      - prod
+    description: 'Environment to use'
+---
+
+### Overview
+The Orders Events channel is the central stream for all order-related events across the order processing lifecycle. This includes order creation, updates, payment status, fulfillment status, and customer communications. All events related to a specific order are guaranteed to be processed in sequence when using orderId as the partition key.
+
+<ChannelInformation />
+
+### Publishing a message using Kafka
+
+Here is an example of how to publish an order event using Kafka:
+
+```python
+from kafka import KafkaProducer
+import json
+from datetime import datetime
+
+# Kafka configuration
+bootstrap_servers = ['localhost:9092']
+topic = f'orders.{env}.events'
+
+# Create a Kafka producer
+producer = KafkaProducer(
+    bootstrap_servers=bootstrap_servers,
+    value_serializer=lambda v: json.dumps(v).encode('utf-8')
+)
+
+# Example order created event
+order_event = {
+    "eventType": "ORDER_CREATED",
+    "timestamp": datetime.utcnow().isoformat(),
+    "version": "1.0",
+    "payload": {
+        "orderId": "12345",
+        "customerId": "CUST-789",
+        "items": [
+            {
+                "productId": "PROD-456",
+                "quantity": 2,
+                "price": 29.99
+            }
+        ],
+        "totalAmount": 59.98,
+        "shippingAddress": {
+            "street": "123 Main St",
+            "city": "Springfield",
+            "country": "US"
+        }
+    },
+    "metadata": {
+        "source": "web_checkout",
+        "correlationId": "abc-xyz-123"
+    }
+}
+
+# Send the message - using orderId as key for partitioning
+producer.send(
+    topic, 
+    key=order_event['payload']['orderId'].encode('utf-8'),
+    value=order_event
+)
+producer.flush()
+
+print(f"Order event sent to topic {topic}")
+
+================================================================================
+File: channels/payment.{env}.events/index.md
+Size: 2.22 kB
+================================================================================
+
+---
+id: payments.{env}.events
+name: Payment Events Channel
+version: 1.0.0
+summary: |
+ All events contain payment ID for traceability and ordered processing.
+owners:
+ - dboyne
+address: payments.{env}.events
+protocols: 
+ - kafka
+
+parameters:
+ env:
+   enum:
+     - dev
+     - sit
+     - prod
+   description: 'Environment to use for payment events'
+---
+
+### Overview
+The Payments Events channel is the central stream for all payment lifecycle events. This includes payment initiation, authorization, capture, completion and failure scenarios. Events for a specific payment are guaranteed to be processed in sequence when using paymentId as the partition key.
+
+<ChannelInformation />
+
+### Publishing Events Using Kafka
+
+Here's an example of publishing a payment event:
+
+```python
+from kafka import KafkaProducer
+import json
+from datetime import datetime
+
+# Kafka configuration
+bootstrap_servers = ['localhost:9092']
+topic = f'payments.{env}.events'
+
+# Create Kafka producer
+producer = KafkaProducer(
+   bootstrap_servers=bootstrap_servers,
+   value_serializer=lambda v: json.dumps(v).encode('utf-8')
+)
+
+# Example payment processed event
+payment_event = {
+   "eventType": "PAYMENT_PROCESSED",
+   "timestamp": datetime.utcnow().isoformat(),
+   "version": "1.0",
+   "payload": {
+       "paymentId": "PAY-123-456", 
+       "orderId": "ORD-789",
+       "amount": {
+           "value": 99.99,
+           "currency": "USD"
+       },
+       "status": "SUCCESS",
+       "paymentMethod": {
+           "type": "CREDIT_CARD",
+           "last4": "4242",
+           "expiryMonth": "12",
+           "expiryYear": "2025",
+           "network": "VISA"
+       },
+       "transactionDetails": {
+           "processorId": "stripe_123xyz",
+           "authorizationCode": "AUTH123",
+           "captureId": "CAP456"
+       }
+   },
+   "metadata": {
+       "correlationId": "corr-123-abc",
+       "merchantId": "MERCH-456", 
+       "source": "payment_service",
+       "environment": "prod",
+       "idempotencyKey": "PAY-123-456-2024-11-11-99.99"
+   }
+}
+
+# Send message - using paymentId as key for partitioning
+producer.send(
+   topic,
+   key=payment_event['payload']['paymentId'].encode('utf-8'),
+   value=payment_event
+)
+producer.flush()
+```
+
+================================================================================
+File: components/footer.astro
+Size: 190 B
+================================================================================
+
+---
+import config from '@config';
+---
+
+<div class="w-full text-right">
+  <span class="italic text-gray-800">Event-driven architecture documentation: {config.organizationName}</span>
+</div>
+
+
+
+================================================================================
+File: domains/Orders/changelog.md
+Size: 101 B
+================================================================================
+
+---
+createdAt: 2024-08-01
+---
+
+### Service added to domain
+
+Added the InventoryService to the domain.
+
+================================================================================
+File: domains/Orders/index.md
+Size: 2.22 kB
+================================================================================
+
+---
+id: Orders
+name: Orders
+version: 0.0.3
+owners:
+  - dboyne
+  - full-stack
+services:
+  - id: InventoryService
+    version: 0.0.2
+  - id: NotificationService
+    version: 0.0.2
+  - id: OrdersService
+    version: 0.0.2
+badges:
+  - content: New domain
+    backgroundColor: blue
+    textColor: blue
+---
+
+import Footer from '@catalog/components/footer.astro';
+
+## Overview
+
+<Admonition type="warning">Please ensure all services are updated to the latest version for compatibility and performance improvements.</Admonition>
+
+The Orders domain handles all operations related to customer orders, from creation to fulfillment. This documentation provides an overview of the events and services involved in the Orders domain, helping developers and stakeholders understand the event-driven architecture.
+
+
+<Tiles >
+    <Tile icon="UserGroupIcon" href="/docs/teams/full-stack" title="Contact the team" description="Any questions? Feel free to contact the owners" />
+    <Tile icon="RectangleGroupIcon" href={`/visualiser/domains/${frontmatter.id}/${frontmatter.version}`} title={`${frontmatter.services.length} services are in this domain`} description="This service sends messages to downstream consumers" />
+</Tiles>
+
+
+
+## Bounded context
+
+<NodeGraph />
+
+### Order example (sequence diagram)
+
+```mermaid
+sequenceDiagram
+    participant Customer
+    participant OrdersService
+    participant InventoryService
+    participant NotificationService
+
+    Customer->>OrdersService: Place Order
+    OrdersService->>InventoryService: Check Inventory
+    InventoryService-->>OrdersService: Inventory Available
+    OrdersService->>InventoryService: Reserve Inventory
+    OrdersService->>NotificationService: Send Order Confirmation
+    NotificationService-->>Customer: Order Confirmation
+    OrdersService->>Customer: Order Placed Successfully
+    OrdersService->>InventoryService: Update Inventory
+```
+
+## Flows
+
+### Cancel Subscription flow
+Documented flow when a user cancels their subscription.
+
+<Flow id="CancelSubscription" version="latest" includeKey={false} />
+
+### Payment processing flow
+Documented flow when a user makes a payment within the order domain
+
+<Flow id="PaymentFlow" version="latest" includeKey={false} />
+
+<Footer />
+
+
+================================================================================
+File: domains/Orders/services/InventoryService/changelog.md
+Size: 207 B
+================================================================================
+
+---
+createdAt: 2024-08-01
+---
+
+### Service receives additional events
+
+Service now receives [OrderAmended](/docs/events/OrderAmended/0.0.1) and [UpdateInventory](/docs/commands/UpdateInventory/0.0.3) events.
+
+================================================================================
+File: domains/Orders/services/InventoryService/commands/AddInventory/index.md
+Size: 993 B
+================================================================================
+
+---
+id: AddInventory
+name: Add inventory
+version: 0.0.3
+summary: |
+  Command that will add item to a given inventory id
+owners:
+    - dboyne
+    - msmith
+    - asmith
+    - full-stack
+    - mobile-devs
+badges:
+    - content: Recently updated!
+      backgroundColor: green
+      textColor: green
+channels:
+  - id: inventory.{env}.events
+    parameters:
+      env: staging
+schemaPath: 'schema.json'
+---
+
+import Footer from '@catalog/components/footer.astro';
+
+## Overview
+
+The AddInventory command is issued to add new stock to the inventory. This command is used by the inventory management system to update the quantity of products available in the warehouse or store.
+
+## Architecture diagram
+
+<NodeGraph/>
+
+## Payload example
+
+```json title="Payload example"
+{
+  "productId": "789e1234-b56c-78d9-e012-3456789fghij",
+  "quantity": 50,
+  "warehouseId": "456e7891-c23d-45f6-b78a-123456789abc",
+  "timestamp": "2024-07-04T14:48:00Z"
+}
+
+```
+
+## Schema
+
+<Schema file="schema.json"/>
+
+<Footer />
+
+
+
+
+================================================================================
+File: domains/Orders/services/InventoryService/commands/AddInventory/schema.json
+Size: 912 B
+================================================================================
+
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "AddInventoryCommand",
+    "type": "object",
+    "properties": {
+      "productId": {
+        "type": "string",
+        "format": "uuid",
+        "description": "The unique identifier of the product being added to the inventory."
+      },
+      "quantity": {
+        "type": "integer",
+        "description": "The quantity of the product being added to the inventory."
+      },
+      "warehouseId": {
+        "type": "string",
+        "format": "uuid",
+        "description": "The unique identifier of the warehouse where the inventory is being added."
+      },
+      "timestamp": {
+        "type": "string",
+        "format": "date-time",
+        "description": "The date and time when the inventory was added."
+      }
+    },
+    "required": ["productId", "quantity", "warehouseId", "timestamp"],
+    "additionalProperties": false
+  }
+  
+
+================================================================================
+File: domains/Orders/services/InventoryService/commands/PlaceOrder/index.md
+Size: 740 B
+================================================================================
+
+---
+id: PlaceOrder
+name: Place Order
+version: 0.0.1
+summary: |
+  Command that will place an order
+owners:
+    - dboyne
+    - msmith
+    - asmith
+    - full-stack
+    - mobile-devs
+badges:
+    - content: Recently updated!
+      backgroundColor: green
+      textColor: green
+schemaPath: 'schema.json'
+---
+
+import Footer from '@catalog/components/footer.astro';
+
+## Overview
+
+The Order Placement Command is a versatile and robust system designed to streamline the process of placing an order. This command takes care of all the essential details needed to complete a purchase, ensuring a smooth and efficient transaction from start to finish.
+
+## Architecture diagram
+
+<NodeGraph/>
+
+## Schema
+
+<SchemaViewer file="schema.json"/>
+
+<Footer />
+
+
+
+
+================================================================================
+File: domains/Orders/services/InventoryService/commands/PlaceOrder/schema.json
+Size: 3.54 kB
+================================================================================
+
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Order",
+  "description": "A schema representing an order placed by a customer",
+  "type": "object",
+  "properties": {
+    "orderId": {
+      "description": "Unique identifier for the order",
+      "type": "string"
+    },
+    "customer": {
+      "description": "Information about the customer placing the order",
+      "type": "object",
+      "properties": {
+        "customerId": {
+          "description": "Unique identifier for the customer",
+          "type": "string"
+        },
+        "name": {
+          "description": "Name of the customer",
+          "type": "string"
+        },
+        "email": {
+          "description": "Email address of the customer",
+          "type": "string",
+          "format": "email"
+        },
+        "phone": {
+          "description": "Phone number of the customer",
+          "type": "string",
+          "pattern": "^[+]?[0-9]{10,15}$"
+        }
+      },
+      "required": ["customerId", "name", "email"]
+    },
+    "items": {
+      "description": "List of items in the order",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "itemId": {
+            "description": "Unique identifier for the item",
+            "type": "string"
+          },
+          "name": {
+            "description": "Name of the item",
+            "type": "string"
+          },
+          "quantity": {
+            "description": "Quantity of the item ordered",
+            "type": "integer",
+            "minimum": 1
+          },
+          "price": {
+            "description": "Price per unit of the item",
+            "type": "number",
+            "minimum": 0
+          }
+        },
+        "required": ["itemId", "name", "quantity", "price"]
+      }
+    },
+    "shippingAddress": {
+      "description": "Address where the order will be shipped",
+      "type": "object",
+      "properties": {
+        "street": {
+          "description": "Street address",
+          "type": "string"
+        },
+        "city": {
+          "description": "City",
+          "type": "string"
+        },
+        "state": {
+          "description": "State or province",
+          "type": "string"
+        },
+        "zip": {
+          "description": "ZIP or postal code",
+          "type": "string"
+        },
+        "country": {
+          "description": "Country",
+          "type": "string"
+        }
+      },
+      "required": ["street", "city", "state", "zip", "country"]
+    },
+    "payment": {
+      "description": "Payment information for the order",
+      "type": "object",
+      "properties": {
+        "paymentMethod": {
+          "description": "Payment method used",
+          "type": "string",
+          "enum": ["Credit Card", "PayPal", "Bank Transfer"]
+        },
+        "transactionId": {
+          "description": "Transaction ID for the payment",
+          "type": "string"
+        },
+        "amount": {
+          "description": "Total amount paid",
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "required": ["paymentMethod", "transactionId", "amount"]
+    },
+    "orderDate": {
+      "description": "Date when the order was placed",
+      "type": "string",
+      "format": "date-time"
+    },
+    "status": {
+      "description": "Current status of the order",
+      "type": "string",
+      "enum": ["Pending", "Processing", "Shipped", "Delivered", "Cancelled"]
+    }
+  },
+  "required": ["orderId", "customer", "items", "shippingAddress", "payment", "orderDate", "status"]
+}
+
+
+================================================================================
+File: domains/Orders/services/InventoryService/commands/UpdateInventory/index.md
+Size: 1.18 kB
+================================================================================
+
+---
+id: UpdateInventory
+name: Update inventory
+version: 0.0.3
+summary: |
+  Command that will update a given inventory item
+owners:
+    - dboyne
+    - msmith
+    - asmith
+    - full-stack
+    - mobile-devs
+badges:
+    - content: Recently updated!
+      backgroundColor: green
+      textColor: green
+channels:
+  - id: inventory.{env}.events
+    parameters:
+      env: staging
+schemaPath: "schema.json"
+---
+
+import Footer from '@catalog/components/footer.astro';
+
+## Overview
+
+The UpdateInventory command is issued to update the existing stock levels of a product in the inventory. This command is used by the inventory management system to adjust the quantity of products available in the warehouse or store, either by increasing or decreasing the current stock levels.
+
+## Architecture diagram
+
+<NodeGraph />
+
+<SchemaViewer file="schema.json" title="JSON Schema" maxHeight="500" />
+
+## Payload example
+
+```json title="Payload example"
+{
+  "productId": "789e1234-b56c-78d9-e012-3456789fghij",
+  "quantityChange": -10,
+  "warehouseId": "456e7891-c23d-45f6-b78a-123456789abc",
+  "timestamp": "2024-07-04T14:48:00Z"
+}
+```
+
+## Schema (JSON schema)
+
+<Schema file="schema.json"/>
+
+<Footer />
+
+================================================================================
+File: domains/Orders/services/InventoryService/commands/UpdateInventory/schema.json
+Size: 1.02 kB
+================================================================================
+
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "UpdateInventoryCommand",
+    "type": "object",
+    "properties": {
+      "productId": {
+        "type": "string",
+        "format": "uuid",
+        "description": "The unique identifier of the product whose inventory is being updated."
+      },
+      "quantityChange": {
+        "type": "integer",
+        "description": "The change in quantity of the product in the inventory. Positive values indicate an increase, while negative values indicate a decrease."
+      },
+      "warehouseId": {
+        "type": "string",
+        "format": "uuid",
+        "description": "The unique identifier of the warehouse where the inventory is being updated."
+      },
+      "timestamp": {
+        "type": "string",
+        "format": "date-time",
+        "description": "The date and time when the inventory update occurred."
+      }
+    },
+    "required": ["productId", "quantityChange", "warehouseId", "timestamp"],
+    "additionalProperties": false
+  }
+  
+
+================================================================================
+File: domains/Orders/services/InventoryService/events/InventoryAdjusted/changelog.md
+Size: 1.37 kB
+================================================================================
+
+---
+createdAt: 2024-08-01
+badges:
+    - content: ⭐️ JSON Schema
+      backgroundColor: purple
+      textColor: purple
+---
+
+### Added support for JSON Schema
+
+InventoryAdjusted uses Avro but now also supports JSON Draft 7.
+
+```json title="Employee JSON Draft"
+// labeled-line-markers.jsx
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "title": "Employee",
+  "properties": {
+    "Name": {
+      "type": "string"
+    },
+    "Age": {
+      "type": "integer"
+    },
+    "Town": {
+      "type": "string"
+    }
+  },
+  "required": ["Name", "Age", "Town"]
+}
+
+```
+
+Using it with our Kafka Cluster
+
+## 1. Create a new topic
+
+```sh
+# Create a topic named 'employee_topic'
+kafka-topics.sh --create --topic employee_topic --bootstrap-server localhost:9092 --partitions 1 --replication-factor 1
+```
+
+## Step 2: Prepare the JSON Message
+
+Create a JSON file named `employee.json` with the following content:
+
+```json
+{
+  "Name": "John Doe",
+  "Age": 30,
+  "Town": "Springfield"
+}
+```
+
+## Step 3: Produce the Message to Kafka Topic
+
+Use the Kafka producer CLI to send the JSON message:
+
+```sh
+cat employee.json | kafka-console-producer.sh --topic employee_topic --bootstrap-server localhost:9092
+```
+
+## Step 4: Verify the Message (Optional)
+
+```sh
+kafka-console-consumer.sh --topic employee_topic --from-beginning --bootstrap-server localhost:9092
+```
+
+
+================================================================================
+File: domains/Orders/services/InventoryService/events/InventoryAdjusted/index.md
+Size: 3.15 kB
+================================================================================
+
+---
+id: InventoryAdjusted
+name: Inventory adjusted
+version: 1.0.1
+summary: |
+  Indicates a change in inventory level
+owners:
+    - dboyne
+    - msmith
+    - asmith
+    - full-stack
+    - mobile-devs
+channels:
+  - id: inventory.{env}.events
+badges:
+    - content: Recently updated!
+      backgroundColor: green
+      textColor: green
+    - content: Channel:Apache Kafka
+      backgroundColor: yellow
+      textColor: yellow
+schemaPath: 'schema.avro'
+---
+
+import Footer from '@catalog/components/footer.astro';
+
+## Overview
+
+The `Inventory Adjusted` event is triggered whenever there is a change in the inventory levels of a product. This could occur due to various reasons such as receiving new stock, sales, returns, or manual adjustments by the inventory management team. The event ensures that all parts of the system that rely on inventory data are kept up-to-date with the latest inventory levels.
+
+<Tiles >
+    <Tile icon="UserGroupIcon" href="/docs/teams/full-stack" title="Contact the team" description="Any questions? Feel free to contact the owners" />
+    <Tile icon="DocumentIcon" href={`/generated/events/Inventory/${frontmatter.id}/schema.avro`} title="View the schema" description="View the schema directly in your browser" />
+</Tiles>
+
+## Architecture diagram
+
+<NodeGraph />
+
+<SchemaViewer file="schema.json" title="JSON Schema" maxHeight="500" />
+
+## Payload example
+
+Event example you my see being published.
+
+```json title="Payload example"
+{
+  "Name": "John Doe",
+  "Age": 30,
+  "Department": "Engineering",
+  "Position": "Software Engineer",
+  "Salary": 85000.50,
+  "JoinDate": "2024-01-15"
+}
+```
+
+## Schema (avro)
+
+<Schema file="schema.avro" title="Inventory Adjusted Schema (avro)" />
+
+## Producing the Event
+
+To produce an Inventory Adjusted event, use the following example Kafka producer configuration in Python:
+
+```python title="Produce event in Python" frame="terminal"
+from kafka import KafkaProducer
+import json
+from datetime import datetime
+
+# Kafka configuration
+producer = KafkaProducer(
+    bootstrap_servers=['localhost:9092'],
+    value_serializer=lambda v: json.dumps(v).encode('utf-8')
+)
+
+# Event data
+event_data = {
+  "event_id": "abc123",
+  "timestamp": datetime.utcnow().isoformat() + 'Z',
+  "product_id": "prod987",
+  "adjusted_quantity": 10,
+  "new_quantity": 150,
+  "adjustment_reason": "restock",
+  "adjusted_by": "user123"
+}
+
+# Send event to Kafka topic
+producer.send('inventory.adjusted', event_data)
+producer.flush()
+```
+
+### Consuming the Event
+
+To consume an Inventory Adjusted event, use the following example Kafka consumer configuration in Python:
+
+```python title="Consuming the event with python" frame="terminal"
+from kafka import KafkaConsumer
+import json
+
+# Kafka configuration
+consumer = KafkaConsumer(
+    'inventory.adjusted',
+    bootstrap_servers=['localhost:9092'],
+    auto_offset_reset='earliest',
+    enable_auto_commit=True,
+    group_id='inventory_group',
+    value_serializer=lambda v: json.dumps(v).encode('utf-8')
+)
+
+# Consume events
+for message in consumer:
+    event_data = json.loads(message.value)
+    print(f"Received Inventory Adjusted event: {event_data}")
+```
+
+<Footer />
+
+================================================================================
+File: domains/Orders/services/InventoryService/events/InventoryAdjusted/schema.avro
+Size: 405 B
+================================================================================
+
+{
+  "type" : "record",
+  "namespace" : "Tutorialspoint",
+  "name" : "Employee",
+  "fields" : [
+     { "name" : "Name", "type" : "string" },
+     { "name" : "Age", "type" : "int" },
+     { "name" : "Department", "type" : "string" },
+     { "name" : "Position", "type" : "string" },
+     { "name" : "Salary", "type" : "double" },
+     { "name" : "JoinDate", "type" : "string", "logicalType": "date" }
+  ]
+}
+
+
+================================================================================
+File: domains/Orders/services/InventoryService/events/InventoryAdjusted/schema.json
+Size: 953 B
+================================================================================
+
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Employee",
+  "type": "object",
+  "description": "A record representing an employee",
+  "properties": {
+    "Name": {
+      "type": "string",
+      "description": "The name of the employee"
+    },
+    "Age": {
+      "type": "integer",
+      "description": "The age of the employee"
+    },
+    "Department": {
+      "type": "string",
+      "description": "The department where the employee works"
+    },
+    "Position": {
+      "type": "string",
+      "description": "The position or title of the employee within the department"
+    },
+    "Salary": {
+      "type": "number",
+      "format": "double",
+      "description": "The salary of the employee"
+    },
+    "JoinDate": {
+      "type": "string",
+      "format": "date",
+      "description": "The date when the employee joined the company"
+    }
+  },
+  "required": ["Name", "Age", "Department", "Position", "Salary", "JoinDate"]
+}
+
+
+================================================================================
+File: domains/Orders/services/InventoryService/events/InventoryAdjusted/versioned/0.0.1/changelog.md
+Size: 600 B
+================================================================================
+
+---
+createdAt: 2024-07-01
+badges:
+    - content: Breaking change
+      backgroundColor: red
+      textColor: red
+---
+
+### Removed fields from schema, added new owners
+
+`Gender` property has been removed from the Schema of the event
+
+Also added the [full stackers](/docs/teams/full-stack) team as owners of this event
+
+```diff lang="json"
+  {
+    "type" : "record",
+    "namespace" : "Tutorialspoint",
+    "name" : "Employee",
+    "fields" : [
+      { "name" : "Name" , "type" : "string" },
+      { "name" : "Age" , "type" : "int" },
+-     { "name" : "Gender" , "type" : "string" },
+    ]
+  }
+```
+
+
+
+
+
+
+================================================================================
+File: domains/Orders/services/InventoryService/events/InventoryAdjusted/versioned/0.0.1/index.md
+Size: 436 B
+================================================================================
+
+---
+id: InventoryAdjusted
+name: Inventory adjusted
+version: 0.0.1
+summary: |
+  Indicates a change in inventory level
+owners:
+    - dboyne
+badges:
+    - content: Recently updated!
+      backgroundColor: green
+      textColor: green
+---
+
+<Admonition>When firing this event make sure you set the `correlation-id` in the headers. Our schemas have standard metadata make sure you read and follow it.</Admonition>
+
+### Details
+
+<NodeGraph />
+
+
+================================================================================
+File: domains/Orders/services/InventoryService/events/InventoryAdjusted/versioned/0.0.1/schema.avro
+Size: 187 B
+================================================================================
+
+{
+  "type" : "record",
+  "namespace" : "Tutorialspoint",
+  "name" : "Employee",
+  "fields" : [
+     { "name" : "Name" , "type" : "string" },
+     { "name" : "Age" , "type" : "int" }
+  ]
+}
+
+================================================================================
+File: domains/Orders/services/InventoryService/events/InventoryAdjusted/versioned/1.0.0/changelog.md
+Size: 549 B
+================================================================================
+
+---
+createdAt: 2024-07-11
+badges:
+    - content: New field
+      backgroundColor: green
+      textColor: green
+---
+
+### Added new field to schema
+
+We added the new town property to the schema for downstream consumers. 
+
+```json ins={"New: Added new Town property to schema:":9-10}
+// labeled-line-markers.jsx
+{
+  "type" : "record",
+  "namespace" : "Tutorialspoint",
+  "name" : "Employee",
+  "fields" : [
+     { "name" : "Name" , "type" : "string" },
+     { "name" : "Age" , "type" : "int" },
+
+     { "name" : "Town" , "type" : "string" },
+  ]
+}
+```
+
+
+================================================================================
+File: domains/Orders/services/InventoryService/events/InventoryAdjusted/versioned/1.0.0/index.md
+Size: 2.88 kB
+================================================================================
+
+---
+id: InventoryAdjusted
+name: Inventory adjusted
+version: 1.0.0
+summary: |
+  Indicates a change in inventory level
+owners:
+    - dboyne
+    - msmith
+    - asmith
+    - full-stack
+    - mobile-devs
+badges:
+    - content: Recently updated!
+      backgroundColor: green
+      textColor: green
+    - content: Channel:Apache Kafka
+      backgroundColor: yellow
+      textColor: yellow
+---
+
+## Overview
+
+The `Inventory Adjusted` event is triggered whenever there is a change in the inventory levels of a product. This could occur due to various reasons such as receiving new stock, sales, returns, or manual adjustments by the inventory management team. The event ensures that all parts of the system that rely on inventory data are kept up-to-date with the latest inventory levels.
+
+<NodeGraph />
+
+## Event Details
+
+### Event Name
+`inventory.adjusted`
+
+### Description
+This event indicates that the inventory count for one or more products has been adjusted. The event carries the updated inventory details including the product ID, the new quantity, and the reason for the adjustment.
+
+### Payload
+The payload of the `Inventory Adjusted` event includes the following fields:
+
+```json title="Example of payload" frame="terminal"
+{
+  "event_id": "string",
+  "timestamp": "ISO 8601 date-time",
+  "product_id": "string",
+  "adjusted_quantity": "integer",
+  "new_quantity": "integer",
+  "adjustment_reason": "string",
+  "adjusted_by": "string"
+}
+```
+
+### Producing the Event
+
+To produce an Inventory Adjusted event, use the following example Kafka producer configuration in Python:
+
+```python title="Produce event in Python" frame="terminal"
+from kafka import KafkaProducer
+import json
+from datetime import datetime
+
+# Kafka configuration
+producer = KafkaProducer(
+    bootstrap_servers=['localhost:9092'],
+    value_serializer=lambda v: json.dumps(v).encode('utf-8')
+)
+
+# Event data
+event_data = {
+  "event_id": "abc123",
+  "timestamp": datetime.utcnow().isoformat() + 'Z',
+  "product_id": "prod987",
+  "adjusted_quantity": 10,
+  "new_quantity": 150,
+  "adjustment_reason": "restock",
+  "adjusted_by": "user123"
+}
+
+# Send event to Kafka topic
+producer.send('inventory.adjusted', event_data)
+producer.flush()
+```
+
+### Consuming the Event
+
+To consume an Inventory Adjusted event, use the following example Kafka consumer configuration in Python:
+
+```python title="Consuming the event with python" frame="terminal"
+from kafka import KafkaConsumer
+import json
+
+# Kafka configuration
+consumer = KafkaConsumer(
+    'inventory.adjusted',
+    bootstrap_servers=['localhost:9092'],
+    auto_offset_reset='earliest',
+    enable_auto_commit=True,
+    group_id='inventory_group',
+    value_serializer=lambda v: json.dumps(v).encode('utf-8')
+)
+
+# Consume events
+for message in consumer:
+    event_data = json.loads(message.value)
+    print(f"Received Inventory Adjusted event: {event_data}")
+```
+
+================================================================================
+File: domains/Orders/services/InventoryService/events/InventoryAdjusted/versioned/1.0.0/schema.avro
+Size: 234 B
+================================================================================
+
+{
+  "type" : "record",
+  "namespace" : "Tutorialspoint",
+  "name" : "Employee",
+  "fields" : [
+     { "name" : "Name" , "type" : "string" },
+     { "name" : "Age" , "type" : "int" },
+     { "name" : "Town" , "type" : "string" },
+  ]
+}
+
+================================================================================
+File: domains/Orders/services/InventoryService/events/OutOfStock/index.md
+Size: 2.69 kB
+================================================================================
+
+---
+id: OutOfStock
+name: Inventory out of stock
+version: 0.0.4
+summary: |
+  Indicates inventory is out of stock
+owners:
+    - dboyne
+    - msmith
+    - asmith
+    - full-stack
+    - mobile-devs
+channels:
+  - id: inventory.{env}.events
+badges:
+    - content: Recently updated!
+      backgroundColor: green
+      textColor: green
+    - content: Channel:Apache Kafka
+      backgroundColor: yellow
+      textColor: yellow
+---
+
+import Footer from '@catalog/components/footer.astro';
+
+## Overview
+
+The `Inventory Adjusted` event is triggered whenever there is a change in the inventory levels of a product. This could occur due to various reasons such as receiving new stock, sales, returns, or manual adjustments by the inventory management team. The event ensures that all parts of the system that rely on inventory data are kept up-to-date with the latest inventory levels.
+
+<NodeGraph />
+
+### Payload
+The payload of the `Inventory Adjusted` event includes the following fields:
+
+```json title="Example of payload" frame="terminal"
+{
+  "event_id": "string",
+  "timestamp": "ISO 8601 date-time",
+  "product_id": "string",
+  "adjusted_quantity": "integer",
+  "new_quantity": "integer",
+  "adjustment_reason": "string",
+  "adjusted_by": "string"
+}
+```
+
+### Producing the Event
+
+To produce an Inventory Adjusted event, use the following example Kafka producer configuration in Python:
+
+```python title="Produce event in Python" frame="terminal"
+from kafka import KafkaProducer
+import json
+from datetime import datetime
+
+# Kafka configuration
+producer = KafkaProducer(
+    bootstrap_servers=['localhost:9092'],
+    value_serializer=lambda v: json.dumps(v).encode('utf-8')
+)
+
+# Event data
+event_data = {
+  "event_id": "abc123",
+  "timestamp": datetime.utcnow().isoformat() + 'Z',
+  "product_id": "prod987",
+  "adjusted_quantity": 10,
+  "new_quantity": 150,
+  "adjustment_reason": "restock",
+  "adjusted_by": "user123"
+}
+
+# Send event to Kafka topic
+producer.send('inventory.adjusted', event_data)
+producer.flush()
+```
+
+### Consuming the Event
+
+To consume an Inventory Adjusted event, use the following example Kafka consumer configuration in Python:
+
+```python title="Consuming the event with python" frame="terminal"
+from kafka import KafkaConsumer
+import json
+
+# Kafka configuration
+consumer = KafkaConsumer(
+    'inventory.adjusted',
+    bootstrap_servers=['localhost:9092'],
+    auto_offset_reset='earliest',
+    enable_auto_commit=True,
+    group_id='inventory_group',
+    value_serializer=lambda v: json.dumps(v).encode('utf-8')
+)
+
+# Consume events
+for message in consumer:
+    event_data = json.loads(message.value)
+    print(f"Received Inventory Adjusted event: {event_data}")
+```
+
+<Footer />
+
+================================================================================
+File: domains/Orders/services/InventoryService/events/OutOfStock/versioned/0.0.1/index.md
+Size: 2.58 kB
+================================================================================
+
+---
+id: OutOfStock
+name: Inventory out of stock
+version: 0.0.1
+summary: |
+  Indicates inventory is out of stock
+owners:
+    - dboyne
+    - msmith
+    - asmith
+    - full-stack
+    - mobile-devs
+badges:
+    - content: Recently updated!
+      backgroundColor: green
+      textColor: green
+    - content: Channel:Apache Kafka
+      backgroundColor: yellow
+      textColor: yellow
+---
+
+## Overview
+
+The `Inventory Adjusted` event is triggered whenever there is a change in the inventory levels of a product. This could occur due to various reasons such as receiving new stock, sales, returns, or manual adjustments by the inventory management team. The event ensures that all parts of the system that rely on inventory data are kept up-to-date with the latest inventory levels.
+
+<NodeGraph />
+
+### Payload
+The payload of the `Inventory Adjusted` event includes the following fields:
+
+```json title="Example of payload" frame="terminal"
+{
+  "event_id": "string",
+  "timestamp": "ISO 8601 date-time",
+  "product_id": "string",
+  "adjusted_quantity": "integer",
+  "new_quantity": "integer",
+  "adjustment_reason": "string",
+  "adjusted_by": "string"
+}
+```
+
+### Producing the Event
+
+To produce an Inventory Adjusted event, use the following example Kafka producer configuration in Python:
+
+```python title="Produce event in Python" frame="terminal"
+from kafka import KafkaProducer
+import json
+from datetime import datetime
+
+# Kafka configuration
+producer = KafkaProducer(
+    bootstrap_servers=['localhost:9092'],
+    value_serializer=lambda v: json.dumps(v).encode('utf-8')
+)
+
+# Event data
+event_data = {
+  "event_id": "abc123",
+  "timestamp": datetime.utcnow().isoformat() + 'Z',
+  "product_id": "prod987",
+  "adjusted_quantity": 10,
+  "new_quantity": 150,
+  "adjustment_reason": "restock",
+  "adjusted_by": "user123"
+}
+
+# Send event to Kafka topic
+producer.send('inventory.adjusted', event_data)
+producer.flush()
+```
+
+### Consuming the Event
+
+To consume an Inventory Adjusted event, use the following example Kafka consumer configuration in Python:
+
+```python title="Consuming the event with python" frame="terminal"
+from kafka import KafkaConsumer
+import json
+
+# Kafka configuration
+consumer = KafkaConsumer(
+    'inventory.adjusted',
+    bootstrap_servers=['localhost:9092'],
+    auto_offset_reset='earliest',
+    enable_auto_commit=True,
+    group_id='inventory_group',
+    value_serializer=lambda v: json.dumps(v).encode('utf-8')
+)
+
+# Consume events
+for message in consumer:
+    event_data = json.loads(message.value)
+    print(f"Received Inventory Adjusted event: {event_data}")
+```
+
+================================================================================
+File: domains/Orders/services/InventoryService/index.md
+Size: 2.86 kB
+================================================================================
+
+---
+id: InventoryService
+version: 0.0.2
+name: Inventory Service
+summary: |
+  Service that handles the inventory
+owners:
+    - dboyne
+    - full-stack
+    - mobile-devs
+receives:
+  - id: OrderConfirmed
+    version: 0.0.1
+  - id: GetInventoryList
+    version: 0.0.1
+  - id: OrderAmended
+  - id: UpdateInventory
+    version: 0.0.3
+  - id: AddInventory
+  - id: GetInventoryStatus
+sends:
+  - id: InventoryAdjusted
+    version: 0.0.4
+  - id: OutOfStock
+    version: 0.0.3
+  - id: GetOrder
+    version: 0.0.1
+repository:
+  language: JavaScript
+  url: https://github.com/event-catalog/pretend-shipping-service
+---
+
+import Footer from '@catalog/components/footer.astro';
+
+
+
+## Overview
+
+The Inventory Service is a critical component of the system responsible for managing product stock levels, tracking inventory movements, and ensuring product availability. It interacts with other services to maintain accurate inventory records and supports operations such as order fulfillment, restocking, and inventory audits.
+
+<Tiles >
+    <Tile icon="DocumentIcon" href={`/docs/services/${frontmatter.id}/${frontmatter.version}/changelog`}  title="View the changelog" description="Want to know the history of this service? View the change logs" />
+    <Tile icon="UserGroupIcon" href="/docs/teams/full-stack" title="Contact the team" description="Any questions? Feel free to contact the owners" />
+    <Tile icon="BoltIcon" href={`/visualiser/services/${frontmatter.id}/${frontmatter.version}`} title={`Sends ${frontmatter.sends.length} messages`} description="This service sends messages to downstream consumers" />
+    <Tile icon="BoltIcon"  href={`/visualiser/services/${frontmatter.id}/${frontmatter.version}`} title={`Receives ${frontmatter.receives.length} messages`} description="This service receives messages from other services" />
+</Tiles>
+
+
+## Architecture diagram
+
+<NodeGraph title="Hello world" />
+
+
+<Steps title="How to connect to Inventory Service">
+  <Step title="Obtain API credentials">
+    Request API credentials from the Inventory Service team.
+  </Step>
+  <Step title="Install the SDK">
+    Run the following command in your project directory:
+    ```bash
+    npm install inventory-service-sdk
+    ```
+  </Step>
+  <Step title="Initialize the client">
+  Use the following code to initialize the Inventory Service client:
+
+  ```js
+  const InventoryService = require('inventory-service-sdk');
+  const client = new InventoryService.Client({
+    clientId: 'YOUR_CLIENT_ID',
+    clientSecret: 'YOUR_CLIENT_SECRET',
+    apiUrl: 'https://api.inventoryservice.com/v1'
+  });
+```
+  </Step>
+  <Step title="Make API calls">
+  
+  You can now use the client to make API calls. For example, to get all products:
+
+  ```js
+  client.getProducts()
+    .then(products => console.log(products))
+    .catch(error => console.error(error));
+  ```
+  </Step>
+</Steps>
+
+<Footer />
+
+================================================================================
+File: domains/Orders/services/InventoryService/queries/GetInventoryList/index.md
+Size: 1.06 kB
+================================================================================
+
+---
+id: GetInventoryList
+name: List inventory list
+version: 0.0.1
+summary: |
+  GET request that will return inventory list
+owners:
+    - dboyne
+badges:
+    - content: Recently updated!
+      backgroundColor: green
+      textColor: green
+schemaPath: schema.json
+---
+
+import Footer from '@catalog/components/footer.astro';
+
+## Overview
+
+The GetInventoryList message is a query used to retrieve a comprehensive list of all available inventory items within a system. It is designed to return detailed information about each item, such as product names, quantities, availability status, and potentially additional metadata like categories or locations. This query is typically utilized by systems or services that require a real-time view of current stock, ensuring that downstream applications or users have accurate and up-to-date information for decision-making or operational purposes. The GetInventoryList is ideal for use cases such as order processing, stock management, or reporting, providing visibility into the full range of inventory data.
+
+<NodeGraph />
+
+================================================================================
+File: domains/Orders/services/InventoryService/queries/GetInventoryList/schema.json
+Size: 1.7 kB
+================================================================================
+
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "GetInventoryList",
+    "description": "A query to retrieve a list of all available inventory items with their details.",
+    "type": "object",
+    "properties": {
+      "filters": {
+        "type": "object",
+        "description": "Optional filters to narrow down the inventory search.",
+        "properties": {
+          "category": {
+            "type": "string",
+            "description": "Filter items by category (e.g., electronics, clothing, etc.)."
+          },
+          "location": {
+            "type": "string",
+            "description": "Filter items by storage location or warehouse."
+          },
+          "minStockLevel": {
+            "type": "integer",
+            "description": "Filter items with a stock level greater than or equal to this value."
+          },
+          "inStock": {
+            "type": "boolean",
+            "description": "Filter items that are currently in stock (true) or out of stock (false)."
+          }
+        },
+        "additionalProperties": false
+      },
+      "pagination": {
+        "type": "object",
+        "description": "Pagination options for the query.",
+        "properties": {
+          "page": {
+            "type": "integer",
+            "description": "The current page of results.",
+            "minimum": 1,
+            "default": 1
+          },
+          "pageSize": {
+            "type": "integer",
+            "description": "The number of items per page.",
+            "minimum": 1,
+            "default": 10
+          }
+        },
+        "required": ["page", "pageSize"]
+      }
+    },
+    "required": [],
+    "additionalProperties": false
+  }
+  
+
+================================================================================
+File: domains/Orders/services/InventoryService/queries/GetInventoryStatus/index.md
+Size: 1.33 kB
+================================================================================
+
+---
+id: GetInventoryStatus
+name: Get inventory status
+version: 0.0.1
+summary: |
+  GET request that will return the current stock status for a specific product.
+owners:
+    - dboyne
+badges:
+    - content: GET Request
+      backgroundColor: green
+      textColor: green
+schemaPath: schema.json
+---
+
+import Footer from '@catalog/components/footer.astro';
+
+## Overview
+
+The GetInventoryStatus message is a query designed to retrieve the current stock status for a specific product. 
+
+This query provides detailed information about the available quantity, reserved quantity, and the warehouse location where the product is stored. It is typically used by systems or services that need to determine the real-time availability of a product, enabling efficient stock management, order fulfillment, and inventory tracking processes. 
+
+This query is essential for ensuring accurate stock levels are reported to downstream systems, including e-commerce platforms, warehouse management systems, and sales channels.
+
+<NodeGraph />
+
+<SchemaViewer file="schema.json" title="JSON Schema" maxHeight="500" />
+
+
+### Query using CURL
+
+Use this snippet to query the inventory status
+
+```sh title="Example CURL command"
+curl -X GET "https://api.yourdomain.com/inventory/status" \
+-H "Content-Type: application/json" \
+-d '{
+  "productId": "12345"
+}'
+```
+
+
+================================================================================
+File: domains/Orders/services/InventoryService/queries/GetInventoryStatus/schema.json
+Size: 894 B
+================================================================================
+
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "GetInventoryStatusResponse",
+    "type": "object",
+    "properties": {
+      "productId": {
+        "type": "string",
+        "description": "The unique identifier for the product"
+      },
+      "availableQuantity": {
+        "type": "integer",
+        "description": "The quantity of the product currently available in stock",
+        "minimum": 0
+      },
+      "reservedQuantity": {
+        "type": "integer",
+        "description": "The quantity of the product that is reserved for pending orders",
+        "minimum": 0
+      },
+      "warehouseLocation": {
+        "type": "string",
+        "description": "The location of the warehouse where the product is stored"
+      }
+    },
+    "required": ["productId", "availableQuantity", "reservedQuantity", "warehouseLocation"],
+    "additionalProperties": false
+  }
+  
+
+================================================================================
+File: domains/Orders/services/InventoryService/versioned/0.0.1/index.md
+Size: 941 B
+================================================================================
+
+---
+id: InventoryService
+version: 0.0.1
+name: Inventory Service
+summary: |
+  Service that handles the inventory
+owners:
+    - dboyne
+    - full-stack
+    - mobile-devs
+receives:
+  - id: OrderConfirmed
+    version: 0.0.1
+  - id: OrderCancelled
+    version: 0.0.1
+  - id: OrderAmended
+    version: 0.0.1
+  - id: UpdateInventory
+    version: 0.0.3
+sends:
+  - id: InventoryAdjusted
+    version: 0.0.4
+  - id: OutOfStock
+    version: 0.0.3
+repository:
+  language: JavaScript
+  url: https://github.com/event-catalog/pretend-shipping-service
+---
+
+## Overview
+
+The Inventory Service is a critical component of the system responsible for managing product stock levels, tracking inventory movements, and ensuring product availability. It interacts with other services to maintain accurate inventory records and supports operations such as order fulfillment, restocking, and inventory audits.
+
+## Architecture diagram
+
+<NodeGraph title="Hello world" />
+
+================================================================================
+File: domains/Orders/services/NotificationService/index.md
+Size: 2.3 kB
+================================================================================
+
+---
+id: NotificationService
+version: 0.0.2
+name: Notifications
+summary: |
+  Service that handles orders
+owners:
+    - dboyne
+receives:
+  - id: InventoryAdjusted
+    version: ">1.0.0"
+  - id: PaymentProcessed
+    version: ^1.0.0
+  - id: GetUserNotifications
+    version: x
+  - id: GetNotificationDetails
+    version: x
+sends:
+  - id: OutOfStock
+    version: latest
+  - id: GetInventoryList
+    version: 0.0.x
+repository:
+  language: JavaScript
+  url: https://github.com/event-catalog/pretend-shipping-service
+---
+
+import Footer from '@catalog/components/footer.astro';
+
+## Overview
+
+The Notification Service is responsible for managing and delivering notifications to users and other services. It supports various notification channels such as email, SMS, push notifications, and in-app notifications. The service ensures reliable and timely delivery of messages and integrates with other services to trigger notifications based on specific events.
+
+<Tiles >
+    <Tile icon="DocumentIcon" href={`/docs/services/${frontmatter.id}/${frontmatter.version}/changelog`}  title="View the changelog" description="Want to know the history of this service? View the change logs" />
+    <Tile icon="UserGroupIcon" href="/docs/teams/full-stack" title="Contact the team" description="Any questions? Feel free to contact the owners" />
+    <Tile icon="BoltIcon" href={`/visualiser/services/${frontmatter.id}/${frontmatter.version}`} title={`Sends ${frontmatter.sends.length} messages`} description="This service sends messages to downstream consumers" />
+    <Tile icon="BoltIcon"  href={`/visualiser/services/${frontmatter.id}/${frontmatter.version}`} title={`Receives ${frontmatter.receives.length} messages`} description="This service receives messages from other services" />
+</Tiles>
+
+
+## Architecture diagram
+
+<NodeGraph />
+
+## Core Concepts
+
+<AccordionGroup>
+  <Accordion title="Notification">
+    - Description: A message that is sent to a user or a service.
+    - Attributes: notificationId, type, recipient, content, channel, status, timestamp
+  </Accordion>
+  <Accordion title="Channel">
+    - Description: The medium through which the notification is delivered (e.g., email, SMS, push notification).
+    - Attributes: channelId, name, provider, configuration 
+  </Accordion>
+</AccordionGroup>
+
+<Footer />
+
+================================================================================
+File: domains/Orders/services/NotificationService/queries/GetNotificationDetails/index.md
+Size: 1.27 kB
+================================================================================
+
+---
+id: GetNotificationDetails
+name: Get notification details
+version: 0.0.1
+summary: |
+  GET request that will return detailed information about a specific notification, identified by its notificationId.
+owners:
+    - dboyne
+badges:
+    - content: Recently updated!
+      backgroundColor: green
+      textColor: green
+schemaPath: schema.json
+---
+
+import Footer from '@catalog/components/footer.astro';
+
+## Overview
+
+The `GetNotificationDetails` message is a query used to retrieve detailed information about a specific notification identified by its `notificationId`. It provides a comprehensive overview of the notification, including the title, message content, status (read/unread), the date it was created, and any additional metadata related to the notification, such as associated orders or system events. This query is helpful in scenarios where users or systems need detailed insights into a particular notification, such as retrieving full messages or auditing notifications sent to users.
+
+Use cases include viewing detailed information about order updates, system notifications, or promotional messages, allowing users to view their full notification history and details.
+
+<NodeGraph />
+
+<SchemaViewer file="schema.json" title="JSON Schema" maxHeight="500" />
+
+
+================================================================================
+File: domains/Orders/services/NotificationService/queries/GetNotificationDetails/schema.json
+Size: 1.71 kB
+================================================================================
+
+
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "GetNotificationDetailsResponse",
+  "type": "object",
+  "properties": {
+    "notificationId": {
+      "type": "string",
+      "description": "The unique identifier for the notification."
+    },
+    "title": {
+      "type": "string",
+      "description": "The title or subject of the notification."
+    },
+    "message": {
+      "type": "string",
+      "description": "The content or message body of the notification."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["unread", "read"],
+      "description": "The read status of the notification."
+    },
+    "userId": {
+      "type": "string",
+      "description": "The unique identifier for the user who received the notification."
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "The date and time when the notification was created."
+    },
+    "type": {
+      "type": "string",
+      "description": "The type of the notification, such as order or system."
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Additional metadata related to the notification, such as order details.",
+      "properties": {
+        "orderId": {
+          "type": "string",
+          "description": "The associated order ID, if applicable."
+        },
+        "shippingProvider": {
+          "type": "string",
+          "description": "The shipping provider for the associated order, if applicable."
+        }
+      },
+      "required": ["orderId"],
+      "additionalProperties": false
+    }
+  },
+  "required": ["notificationId", "title", "message", "status", "userId", "createdAt", "type"],
+  "additionalProperties": false
+}
+
+
+================================================================================
+File: domains/Orders/services/NotificationService/queries/GetUserNotifications/index.md
+Size: 1.27 kB
+================================================================================
+
+---
+id: GetUserNotifications
+name: Get user notifications
+version: 0.0.1
+summary: |
+  GET request that will return a list of notifications for a specific user, with options to filter by status (unread or all).
+owners:
+    - dboyne
+badges:
+    - content: Recently updated!
+      backgroundColor: green
+      textColor: green
+schemaPath: schema.json
+---
+
+import Footer from '@catalog/components/footer.astro';
+
+## Overview
+
+The `GetUserNotifications` message is a query used to retrieve a list of notifications for a specific user. It allows filtering by notification status, such as unread or all notifications. This query is typically utilized by notification services to display user-specific messages, such as order updates, promotional offers, or system notifications. It supports pagination through `limit` and `offset` parameters, ensuring that only a manageable number of notifications are retrieved at once. This query helps users stay informed about important events or updates related to their account, orders, or the platform.
+
+Use cases include delivering notifications for order updates, promotional campaigns, or general system messages to keep the user informed.
+
+<NodeGraph />
+
+<SchemaViewer file="schema.json" title="JSON Schema" maxHeight="500" />
+
+
+
+================================================================================
+File: domains/Orders/services/NotificationService/queries/GetUserNotifications/schema.json
+Size: 1.51 kB
+================================================================================
+
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "GetUserNotificationsResponse",
+    "type": "object",
+    "properties": {
+      "userId": {
+        "type": "string",
+        "description": "The unique identifier for the user."
+      },
+      "notifications": {
+        "type": "array",
+        "description": "A list of notifications for the user.",
+        "items": {
+          "type": "object",
+          "properties": {
+            "notificationId": {
+              "type": "string",
+              "description": "The unique identifier for the notification."
+            },
+            "title": {
+              "type": "string",
+              "description": "The title or subject of the notification."
+            },
+            "message": {
+              "type": "string",
+              "description": "The message body of the notification."
+            },
+            "status": {
+              "type": "string",
+              "enum": ["unread", "read"],
+              "description": "The read status of the notification."
+            },
+            "createdAt": {
+              "type": "string",
+              "format": "date-time",
+              "description": "The date and time when the notification was created."
+            }
+          },
+          "required": ["notificationId", "title", "message", "status", "createdAt"],
+          "additionalProperties": false
+        }
+      }
+    },
+    "required": ["userId", "notifications"],
+    "additionalProperties": false
+  }
+  
+
+================================================================================
+File: domains/Orders/services/OrdersService/changelog.md
+Size: 29 B
+================================================================================
+
+---
+createdAt: 2024-08-01
+---
+
+================================================================================
+File: domains/Orders/services/OrdersService/events/OrderAmended/index.md
+Size: 1.48 kB
+================================================================================
+
+---
+id: OrderAmended
+name: Order amended
+version: 0.0.1
+summary: |
+  Indicates an order has been changed
+owners:
+    - dboyne
+    - msmith
+badges:
+    - content: Recently updated!
+      backgroundColor: green
+      textColor: green
+    - content: Channel:Apache Kafka
+      backgroundColor: yellow
+      textColor: yellow
+schemaPath: schema.avro
+channels:
+  - id: orders.{env}.events
+    parameters:
+      env: staging
+---
+
+import Footer from '@catalog/components/footer.astro';
+
+## Overview
+
+The OrderAmended event is triggered whenever an existing order is modified. This event ensures that all relevant services are notified of changes to an order, such as updates to order items, quantities, shipping information, or status. The event allows the system to maintain consistency and ensure that all dependent services can react appropriately to the amendments.
+
+<NodeGraph />
+
+## Example payload
+
+```json title="Example Payload"
+{
+  "orderId": "123e4567-e89b-12d3-a456-426614174000",
+  "userId": "123e4567-e89b-12d3-a456-426614174000",
+  "amendedItems": [
+    {
+      "productId": "789e1234-b56c-78d9-e012-3456789fghij",
+      "productName": "Example Product",
+      "oldQuantity": 2,
+      "newQuantity": 3,
+      "unitPrice": 29.99,
+      "totalPrice": 89.97
+    }
+  ],
+  "orderStatus": "confirmed",
+  "totalAmount": 150.75,
+  "timestamp": "2024-07-04T14:48:00Z"
+}
+```
+
+## Schema (Avro)
+
+<Schema file="schema.avro" />
+
+## Schema (JSON)
+
+<Schema file="schema.json" />
+
+<Footer />
+
+================================================================================
+File: domains/Orders/services/OrdersService/events/OrderAmended/schema.avro
+Size: 2.08 kB
+================================================================================
+
+{
+  "type": "record",
+  "name": "OrderAmendedEvent",
+  "namespace": "com.example.events",
+  "fields": [
+    {
+      "name": "orderId",
+      "type": "string",
+      "doc": "The unique identifier of the order that was amended."
+    },
+    {
+      "name": "userId",
+      "type": "string",
+      "doc": "The unique identifier of the user who placed the order."
+    },
+    {
+      "name": "amendedItems",
+      "type": {
+        "type": "array",
+        "items": {
+          "type": "record",
+          "name": "AmendedItem",
+          "fields": [
+            {
+              "name": "productId",
+              "type": "string",
+              "doc": "The unique identifier of the product."
+            },
+            {
+              "name": "productName",
+              "type": "string",
+              "doc": "The name of the product."
+            },
+            {
+              "name": "oldQuantity",
+              "type": "int",
+              "doc": "The original quantity of the product ordered."
+            },
+            {
+              "name": "newQuantity",
+              "type": "int",
+              "doc": "The new quantity of the product ordered."
+            },
+            {
+              "name": "unitPrice",
+              "type": "double",
+              "doc": "The price per unit of the product."
+            },
+            {
+              "name": "totalPrice",
+              "type": "double",
+              "doc": "The total price for this order item (newQuantity * unitPrice)."
+            }
+          ]
+        }
+      },
+      "doc": "A list of items that were amended in the order, each containing product details and updated quantities."
+    },
+    {
+      "name": "orderStatus",
+      "type": "string",
+      "doc": "The current status of the order after the amendment."
+    },
+    {
+      "name": "totalAmount",
+      "type": "double",
+      "doc": "The total amount of the order after the amendment."
+    },
+    {
+      "name": "timestamp",
+      "type": "string",
+      "doc": "The date and time when the order was amended, in ISO 8601 format."
+    }
+  ]
+}
+
+
+================================================================================
+File: domains/Orders/services/OrdersService/events/OrderAmended/schema.json
+Size: 2.45 kB
+================================================================================
+
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "OrderAmendedEvent",
+    "type": "object",
+    "properties": {
+      "orderId": {
+        "type": "string",
+        "format": "uuid",
+        "description": "The unique identifier of the order that was amended."
+      },
+      "userId": {
+        "type": "string",
+        "format": "uuid",
+        "description": "The unique identifier of the user who placed the order."
+      },
+      "amendedItems": {
+        "type": "array",
+        "description": "A list of items that were amended in the order, each containing product details and updated quantities.",
+        "items": {
+          "type": "object",
+          "properties": {
+            "productId": {
+              "type": "string",
+              "format": "uuid",
+              "description": "The unique identifier of the product."
+            },
+            "productName": {
+              "type": "string",
+              "description": "The name of the product."
+            },
+            "oldQuantity": {
+              "type": "integer",
+              "description": "The original quantity of the product ordered."
+            },
+            "newQuantity": {
+              "type": "integer",
+              "description": "The new quantity of the product ordered."
+            },
+            "unitPrice": {
+              "type": "number",
+              "format": "float",
+              "description": "The price per unit of the product."
+            },
+            "totalPrice": {
+              "type": "number",
+              "format": "float",
+              "description": "The total price for this order item (newQuantity * unitPrice)."
+            }
+          },
+          "required": ["productId", "productName", "oldQuantity", "newQuantity", "unitPrice", "totalPrice"]
+        }
+      },
+      "orderStatus": {
+        "type": "string",
+        "description": "The current status of the order after the amendment."
+      },
+      "totalAmount": {
+        "type": "number",
+        "format": "float",
+        "description": "The total amount of the order after the amendment."
+      },
+      "timestamp": {
+        "type": "string",
+        "format": "date-time",
+        "description": "The date and time when the order was amended, in ISO 8601 format."
+      }
+    },
+    "required": ["orderId", "userId", "amendedItems", "orderStatus", "totalAmount", "timestamp"],
+    "additionalProperties": false
+  }
+  
+
+================================================================================
+File: domains/Orders/services/OrdersService/events/OrderCancelled/index.md
+Size: 1.5 kB
+================================================================================
+
+---
+id: OrderCancelled
+name: Order cancelled
+version: 0.0.1
+summary: |
+  Indicates an order has been canceled
+owners:
+    - dboyne
+    - msmith
+badges:
+    - content: Recently updated!
+      backgroundColor: green
+      textColor: green
+    - content: Channel:Apache Kafka
+      backgroundColor: yellow
+      textColor: yellow
+schemaPath: 'schema.json'
+channels:
+  - id: orders.{env}.events
+---
+
+import Footer from '@catalog/components/footer.astro';
+
+## Overview
+
+The OrderCancelled event is triggered whenever an existing order is cancelled. This event ensures that all relevant services are notified of the cancellation, allowing them to take appropriate actions such as updating inventory levels, refunding payments, and notifying the user. The event helps maintain consistency across the system by ensuring all dependent services are aware of the order cancellation.
+
+## Example payload
+
+```json title="Example payload"
+{
+  "orderId": "123e4567-e89b-12d3-a456-426614174000",
+  "userId": "123e4567-e89b-12d3-a456-426614174000",
+  "orderItems": [
+    {
+      "productId": "789e1234-b56c-78d9-e012-3456789fghij",
+      "productName": "Example Product",
+      "quantity": 2,
+      "unitPrice": 29.99,
+      "totalPrice": 59.98
+    }
+  ],
+  "orderStatus": "cancelled",
+  "totalAmount": 59.98,
+  "cancellationReason": "Customer requested cancellation",
+  "timestamp": "2024-07-04T14:48:00Z"
+}
+
+```
+
+## Schema
+
+JSON schema for the event.
+
+<Schema title="JSON Schema" file="schema.json"/>
+
+<Footer />
+
+================================================================================
+File: domains/Orders/services/OrdersService/events/OrderCancelled/schema.json
+Size: 2.41 kB
+================================================================================
+
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "OrderCancelledEvent",
+    "type": "object",
+    "properties": {
+      "orderId": {
+        "type": "string",
+        "format": "uuid",
+        "description": "The unique identifier of the order that was cancelled."
+      },
+      "userId": {
+        "type": "string",
+        "format": "uuid",
+        "description": "The unique identifier of the user who placed the order."
+      },
+      "orderItems": {
+        "type": "array",
+        "description": "A list of items included in the cancelled order, each containing product details and quantities.",
+        "items": {
+          "type": "object",
+          "properties": {
+            "productId": {
+              "type": "string",
+              "format": "uuid",
+              "description": "The unique identifier of the product."
+            },
+            "productName": {
+              "type": "string",
+              "description": "The name of the product."
+            },
+            "quantity": {
+              "type": "integer",
+              "description": "The quantity of the product ordered."
+            },
+            "unitPrice": {
+              "type": "number",
+              "format": "float",
+              "description": "The price per unit of the product."
+            },
+            "totalPrice": {
+              "type": "number",
+              "format": "float",
+              "description": "The total price for this order item (quantity * unit price)."
+            }
+          },
+          "required": ["productId", "productName", "quantity", "unitPrice", "totalPrice"]
+        }
+      },
+      "orderStatus": {
+        "type": "string",
+        "description": "The current status of the order after cancellation.",
+        "enum": ["cancelled"]
+      },
+      "totalAmount": {
+        "type": "number",
+        "format": "float",
+        "description": "The total amount of the order that was cancelled."
+      },
+      "cancellationReason": {
+        "type": "string",
+        "description": "The reason for the order cancellation, if provided."
+      },
+      "timestamp": {
+        "type": "string",
+        "format": "date-time",
+        "description": "The date and time when the order was cancelled."
+      }
+    },
+    "required": ["orderId", "userId", "orderItems", "orderStatus", "totalAmount", "timestamp"],
+    "additionalProperties": false
+  }
+  
+
+================================================================================
+File: domains/Orders/services/OrdersService/events/OrderConfirmed/index.md
+Size: 1.28 kB
+================================================================================
+
+---
+id: OrderConfirmed
+name: Order confirmed
+version: 0.0.1
+summary: |
+  Indicates an order has been confirmed
+owners:
+    - dboyne
+    - msmith
+badges:
+    - content: Recently updated!
+      backgroundColor: green
+      textColor: green
+    - content: Channel:Apache Kafka
+      backgroundColor: yellow
+      textColor: yellow
+schemaPath: schema.json
+channels:
+  - id: orders.{env}.events
+---
+
+import Footer from '@catalog/components/footer.astro';
+
+## Overview
+
+The OrderConfirmed event is triggered when an order has been successfully confirmed. This event notifies relevant services that the order is ready for further processing, such as inventory adjustment, payment finalization, and preparation for shipping.
+
+## Architecture Diagram
+
+<NodeGraph />
+
+## Payload
+
+```json title="Example payload"
+{
+  "orderId": "123e4567-e89b-12d3-a456-426614174000",
+  "userId": "123e4567-e89b-12d3-a456-426614174000",
+  "orderItems": [
+    {
+      "productId": "789e1234-b56c-78d9-e012-3456789fghij",
+      "productName": "Example Product",
+      "quantity": 2,
+      "unitPrice": 29.99,
+      "totalPrice": 59.98
+    }
+  ],
+  "orderStatus": "confirmed",
+  "totalAmount": 150.75,
+  "confirmationTimestamp": "2024-07-04T14:48:00Z"
+}
+```
+
+## Schema
+
+<Schema file="schema.json"/>
+
+<Footer />
+
+================================================================================
+File: domains/Orders/services/OrdersService/events/OrderConfirmed/schema.json
+Size: 2.25 kB
+================================================================================
+
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "OrderConfirmedEvent",
+    "type": "object",
+    "properties": {
+      "orderId": {
+        "type": "string",
+        "format": "uuid",
+        "description": "The unique identifier of the confirmed order."
+      },
+      "userId": {
+        "type": "string",
+        "format": "uuid",
+        "description": "The unique identifier of the user who placed the order."
+      },
+      "orderItems": {
+        "type": "array",
+        "description": "A list of items included in the confirmed order, each containing product details and quantities.",
+        "items": {
+          "type": "object",
+          "properties": {
+            "productId": {
+              "type": "string",
+              "format": "uuid",
+              "description": "The unique identifier of the product."
+            },
+            "productName": {
+              "type": "string",
+              "description": "The name of the product."
+            },
+            "quantity": {
+              "type": "integer",
+              "description": "The quantity of the product ordered."
+            },
+            "unitPrice": {
+              "type": "number",
+              "format": "float",
+              "description": "The price per unit of the product."
+            },
+            "totalPrice": {
+              "type": "number",
+              "format": "float",
+              "description": "The total price for this order item (quantity * unitPrice)."
+            }
+          },
+          "required": ["productId", "productName", "quantity", "unitPrice", "totalPrice"]
+        }
+      },
+      "orderStatus": {
+        "type": "string",
+        "description": "The current status of the order after confirmation."
+      },
+      "totalAmount": {
+        "type": "number",
+        "format": "float",
+        "description": "The total amount of the confirmed order."
+      },
+      "confirmationTimestamp": {
+        "type": "string",
+        "format": "date-time",
+        "description": "The date and time when the order was confirmed."
+      }
+    },
+    "required": ["orderId", "userId", "orderItems", "orderStatus", "totalAmount", "confirmationTimestamp"],
+    "additionalProperties": false
+  }
+  
+
+================================================================================
+File: domains/Orders/services/OrdersService/index.md
+Size: 1.75 kB
+================================================================================
+
+---
+id: OrdersService
+version: 0.0.3
+name: Orders Service
+summary: |
+  Service that handles orders
+owners:
+    - dboyne
+receives:
+  - id: InventoryAdjusted
+    version: 0.0.3
+  - id: GetOrder
+sends:
+  - id: OrderAmended
+  - id: OrderCancelled
+  - id: OrderConfirmed
+  - id: AddInventory  
+    version: 0.0.3
+repository:
+  language: JavaScript
+  url: https://github.com/event-catalog/pretend-shipping-service
+schemaPath: "openapi.yml"
+specifications:
+  asyncapiPath: order-service-asyncapi.yaml
+  openapiPath: openapi.yml
+---
+
+import Footer from '@catalog/components/footer.astro';
+
+## Overview
+
+The Orders Service is responsible for managing customer orders within the system. It handles order creation, updating, status tracking, and interactions with other services such as Inventory, Payment, and Notification services to ensure smooth order processing and fulfillment.
+
+<Tiles >
+    <Tile icon="DocumentIcon" href={`/docs/services/${frontmatter.id}/${frontmatter.version}/changelog`}  title="View the changelog" description="Want to know the history of this service? View the change logs" />
+    <Tile icon="UserGroupIcon" href="/docs/teams/full-stack" title="Contact the team" description="Any questions? Feel free to contact the owners" />
+    <Tile icon="BoltIcon" href={`/visualiser/services/${frontmatter.id}/${frontmatter.version}`} title={`Sends ${frontmatter.sends.length} messages`} description="This service sends messages to downstream consumers" />
+    <Tile icon="BoltIcon"  href={`/visualiser/services/${frontmatter.id}/${frontmatter.version}`} title={`Receives ${frontmatter.receives.length} messages`} description="This service receives messages from other services" />
+</Tiles>
+
+## Architecture diagram 
+
+<NodeGraph />
+
+<Footer />
+
+================================================================================
+File: domains/Orders/services/OrdersService/openapi.yml
+Size: 4.66 kB
+================================================================================
+
+openapi: 3.1.0
+info:
+  title: Simple Task - API
+  version: 1.0.2
+  description: Simple Api
+  contact: {}
+  license:
+    name: apache 2.0
+    identifier: apache-2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0.html
+
+servers:
+  - url: https://example.com/
+    
+paths:
+  /v1/task/{id}:
+    put:
+      summary: Do Simple Task
+      operationId: DoSimpleTask
+      responses:
+        '200':
+          description: do a task by id
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '204':
+          description: No content
+        '400':
+          description: Problem with data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Not Authorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Unauthorized'
+        '404':
+          description: not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      description: Allows to do a simple task
+      security:
+        - authorization: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+    delete: 
+      summary: Delete Task
+      operationId: DeleteTask
+      responses:
+        '204':
+          description: Task deleted
+        '400':
+          description: Problem with data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Not Authorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Unauthorized'
+        '404':
+          description: not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      description: Delete a task
+      security:
+        - authorization: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+  /v1/tasks:
+    get:
+      summary: Get List of Tasks
+      operationId: GetTaskList
+      responses:
+        '200':
+          description: Successfully retrieved list of tasks
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Task'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Not Authorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Unauthorized'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      description: Retrieves a list of all tasks
+      security:
+        - authorization: []
+      parameters:
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+          description: The maximum number of tasks to return
+        - in: query
+          name: offset
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+          description: The number of tasks to skip before starting to return results
+
+components:
+  schemas:
+    Task:
+      properties:
+        comments:
+          type: string
+        creationDate:
+          type: string
+        taskId:
+          type: string
+        description:
+          type: string
+        lastUpdate:
+          type: string
+      type: object
+      additionalProperties: false
+    Error:
+      properties:
+        error:
+          type: string
+      required:
+        - error
+      type: object
+    Unauthorized:
+      properties:
+        message:
+          type: string
+      required:
+        - message
+      type: object
+  securitySchemes:
+    authorization:
+      type: http
+      scheme: bearer
+
+================================================================================
+File: domains/Orders/services/OrdersService/order-service-asyncapi.yaml
+Size: 3.58 kB
+================================================================================
+
+asyncapi: 3.0.0
+
+info:
+  title: Order service
+  description: | 
+    This service is in charge of processing order events.
+  version: '1.0.0'
+
+servers: 
+  topic:
+    host: https://mytopic.com
+    description: Custom Topic.
+    protocol: HTTPS
+
+defaultContentType: application/json
+
+channels:
+  orderEventsChannel:
+    address: 'orders.{orderId}'
+    description: All Order related events are distributed and broadcasted for the interested consumers.
+    title: Order events channel
+    messages:
+      OrderConfirmed:
+        summary: Order confirmed event
+        $ref: '#/components/messages/OrderConfirmed'
+      OrderPlaced:
+        summary: Order placed event
+        $ref: '#/components/messages/OrderPlaced'
+
+operations: 
+  onOrderConfirmation:
+    summary: Action to confirm an order.
+    description: The product availability of an order will lead to the confirmation of the order.
+    title: Order Confirmed
+    channel:
+      $ref: '#/channels/orderEventsChannel'
+    action: send
+  onOrderPlacement:
+    summary: Action to place an order.
+    description: The reception and validation of an order will lead to the placement of the order.
+    title: Order Placed
+    channel:
+      $ref: '#/channels/orderEventsChannel'
+    action: send
+
+components:
+  messages:
+    OrderConfirmed:
+      payload:
+        $ref: '#/components/schemas/OrderConfirmed'
+
+    OrderPlaced:
+      payload:
+        $ref: '#/components/schemas/OrderPlaced'
+
+  schemas:
+    orderId:
+      description: The unique identifier of an order
+      type: string
+      pattern: ^([A-Za-z0-9_-]{21})$
+
+    userId:
+      description: The unique identifier of a user
+      type: string
+      pattern: ^([A-Za-z0-9_-]{21})$
+
+    productId:
+      description: The product unique identifier
+      type: string
+      pattern: ^([A-Za-z0-9_-]{21})$
+
+    Order:
+      required:
+        - orderId
+        - userId
+        - productId
+        - price
+        - quantity
+        - orderDate
+      type: object
+      description: order model
+      properties:
+        orderId:
+          "$ref": "#/components/schemas/orderId"
+        orderDate:
+          description: Date of order submition.
+          type: string
+          format: date-time
+        userId:
+          "$ref": "#/components/schemas/userId"
+        productId:
+          "$ref": "#/components/schemas/productId"
+        price:
+          type: number
+        quantity:
+          type: integer
+      title: Order
+
+    EventEnvelope:
+      type: object
+      allOf:
+      - $ref: 'https://raw.githubusercontent.com/cloudevents/spec/v1.0.1/spec.json'
+      properties:
+        id:
+          type: string
+          format: uuid
+        idempotencykey:
+          type: string
+          format: uuid
+        correlationid:
+          type: string
+          format: uuid
+        causationid:
+          type: string
+          format: uuid
+
+    EventType:
+      type: string
+      enum: 
+        - "order.placed" 
+        - "order.confirmed"
+
+    OrderConfirmed:
+      type: object
+      additionalProperties: false
+      allOf:
+        - $ref: '#/components/schemas/EventEnvelope'  
+      properties:
+        data:
+          $ref: '#/components/schemas/Order'
+        type:
+          $ref: '#/components/schemas/EventType'
+
+      required:
+        - data
+
+    OrderPlaced:
+      type: object
+      additionalProperties: false
+      allOf:
+        - $ref: '#/components/schemas/EventEnvelope'
+      properties:
+        data:
+          $ref: '#/components/schemas/Order'
+        type:
+          $ref: '#/components/schemas/EventType'
+      required:
+        - data
+
+
+================================================================================
+File: domains/Orders/services/OrdersService/queries/GetOrder/index.md
+Size: 1.09 kB
+================================================================================
+
+---
+id: GetOrder
+name: Get order details
+version: 0.0.1
+summary: |
+  GET request that will return detailed information about a specific order, identified by its orderId.
+owners:
+    - dboyne
+badges:
+    - content: Recently updated!
+      backgroundColor: green
+      textColor: green
+schemaPath: schema.json
+---
+
+import Footer from '@catalog/components/footer.astro';
+
+## Overview
+
+The `GetOrder` message is a query used to retrieve detailed information about a specific order, identified by its `orderId`. It provides information such as the order status (e.g., pending, completed, shipped), the items within the order, billing and shipping details, payment information, and the order's total amount. This query is commonly used by systems managing order processing, customer service, or order tracking functionalities.
+
+This query can be applied in e-commerce systems, marketplaces, or any platform where users and systems need real-time order data for tracking, auditing, or managing customer purchases.
+
+<NodeGraph />
+
+<SchemaViewer file="schema.json" title="JSON Schema" maxHeight="500" />
+
+================================================================================
+File: domains/Orders/services/OrdersService/versioned/0.0.2/changelog.md
+Size: 29 B
+================================================================================
+
+---
+createdAt: 2024-08-01
+---
+
+================================================================================
+File: domains/Orders/services/OrdersService/versioned/0.0.2/index.md
+Size: 841 B
+================================================================================
+
+---
+id: OrdersService
+version: 0.0.2
+name: Orders Service
+summary: |
+  Service that handles orders
+owners:
+    - dboyne
+receives:
+  - id: InventoryAdjusted
+    version: 0.0.3
+sends:
+  - id: AddInventory  
+    version: 0.0.3
+repository:
+  language: JavaScript
+  url: https://github.com/event-catalog/pretend-shipping-service
+schemaPath: "openapi.yml"
+specifications:
+  asyncapiPath: order-service-asyncapi.yaml
+  openapiPath: openapi.yml
+---
+
+import Footer from '@catalog/components/footer.astro';
+
+## Overview
+
+The Orders Service is responsible for managing customer orders within the system. It handles order creation, updating, status tracking, and interactions with other services such as Inventory, Payment, and Notification services to ensure smooth order processing and fulfillment.
+
+## Architecture diagram 
+
+<NodeGraph />
+
+<Footer />
+
+================================================================================
+File: domains/Orders/services/OrdersService/versioned/0.0.2/openapi.yml
+Size: 2.17 kB
+================================================================================
+
+openapi: 3.1.0
+info:
+  title: Simple Task - API
+  version: 1.0.0
+  description: Simple Api
+  contact: {}
+  license:
+    name: apache 2.0
+    identifier: apache-2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0.html
+
+servers:
+  - url: https://example.com/
+    
+paths:
+  /v1/task/{id}:
+    put:
+      summary: Do Simple Task
+      operationId: DoSimpleTask
+      responses:
+        '200':
+          description: do a task by id
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '204':
+          description: No content
+        '400':
+          description: Problem with data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Not Authorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Unauthorized'
+        '404':
+          description: not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      description: Allows to do a simple task
+      security:
+        - authorization: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+
+components:
+  schemas:
+    Task:
+      properties:
+        comments:
+          type: string
+        creationDate:
+          type: string
+        taskId:
+          type: string
+        description:
+          type: string
+        lastUpdate:
+          type: string
+      type: object
+      additionalProperties: false
+    Error:
+      properties:
+        error:
+          type: string
+      required:
+        - error
+      type: object
+    Unauthorized:
+      properties:
+        message:
+          type: string
+      required:
+        - message
+      type: object
+  securitySchemes:
+    authorization:
+      type: http
+      scheme: bearer
+
+
+================================================================================
+File: domains/Orders/services/OrdersService/versioned/0.0.2/order-service-asyncapi.yaml
+Size: 3.58 kB
+================================================================================
+
+asyncapi: 3.0.0
+
+info:
+  title: Order service
+  description: | 
+    This service is in charge of processing order events.
+  version: '1.0.0'
+
+servers: 
+  topic:
+    host: https://mytopic.com
+    description: Custom Topic.
+    protocol: HTTPS
+
+defaultContentType: application/json
+
+channels:
+  orderEventsChannel:
+    address: 'orders.{orderId}'
+    description: All Order related events are distributed and broadcasted for the interested consumers.
+    title: Order events channel
+    messages:
+      OrderConfirmed:
+        summary: Order confirmed event
+        $ref: '#/components/messages/OrderConfirmed'
+      OrderPlaced:
+        summary: Order placed event
+        $ref: '#/components/messages/OrderPlaced'
+
+operations: 
+  onOrderConfirmation:
+    summary: Action to confirm an order.
+    description: The product availability of an order will lead to the confirmation of the order.
+    title: Order Confirmed
+    channel:
+      $ref: '#/channels/orderEventsChannel'
+    action: send
+  onOrderPlacement:
+    summary: Action to place an order.
+    description: The reception and validation of an order will lead to the placement of the order.
+    title: Order Placed
+    channel:
+      $ref: '#/channels/orderEventsChannel'
+    action: send
+
+components:
+  messages:
+    OrderConfirmed:
+      payload:
+        $ref: '#/components/schemas/OrderConfirmed'
+
+    OrderPlaced:
+      payload:
+        $ref: '#/components/schemas/OrderPlaced'
+
+  schemas:
+    orderId:
+      description: The unique identifier of an order
+      type: string
+      pattern: ^([A-Za-z0-9_-]{21})$
+
+    userId:
+      description: The unique identifier of a user
+      type: string
+      pattern: ^([A-Za-z0-9_-]{21})$
+
+    productId:
+      description: The product unique identifier
+      type: string
+      pattern: ^([A-Za-z0-9_-]{21})$
+
+    Order:
+      required:
+        - orderId
+        - userId
+        - productId
+        - price
+        - quantity
+        - orderDate
+      type: object
+      description: order model
+      properties:
+        orderId:
+          "$ref": "#/components/schemas/orderId"
+        orderDate:
+          description: Date of order submition.
+          type: string
+          format: date-time
+        userId:
+          "$ref": "#/components/schemas/userId"
+        productId:
+          "$ref": "#/components/schemas/productId"
+        price:
+          type: number
+        quantity:
+          type: integer
+      title: Order
+
+    EventEnvelope:
+      type: object
+      allOf:
+      - $ref: 'https://raw.githubusercontent.com/cloudevents/spec/v1.0.1/spec.json'
+      properties:
+        id:
+          type: string
+          format: uuid
+        idempotencykey:
+          type: string
+          format: uuid
+        correlationid:
+          type: string
+          format: uuid
+        causationid:
+          type: string
+          format: uuid
+
+    EventType:
+      type: string
+      enum: 
+        - "order.placed" 
+        - "order.confirmed"
+
+    OrderConfirmed:
+      type: object
+      additionalProperties: false
+      allOf:
+        - $ref: '#/components/schemas/EventEnvelope'  
+      properties:
+        data:
+          $ref: '#/components/schemas/Order'
+        type:
+          $ref: '#/components/schemas/EventType'
+
+      required:
+        - data
+
+    OrderPlaced:
+      type: object
+      additionalProperties: false
+      allOf:
+        - $ref: '#/components/schemas/EventEnvelope'
+      properties:
+        data:
+          $ref: '#/components/schemas/Order'
+        type:
+          $ref: '#/components/schemas/EventType'
+      required:
+        - data
+
+
+================================================================================
+File: domains/Orders/versioned/0.0.1/index.md
+Size: 299 B
+================================================================================
+
+---
+id: Orders
+name: Orders
+version: 0.0.1
+summary: |
+  Domain for everything shopping
+owners:
+    - dboyne
+    - full-stack
+services:
+    - id: InventoryService
+      version: 0.0.2
+badges:
+    - content: New domain
+      backgroundColor: blue
+      textColor: blue
+---
+
+## Overview
+
+<NodeGraph />
+
+
+================================================================================
+File: domains/Orders/versioned/0.0.2/index.md
+Size: 1.4 kB
+================================================================================
+
+---
+id: Orders
+name: Orders
+version: 0.0.2
+owners:
+  - dboyne
+services:
+  - id: InventoryService
+    version: 0.0.2
+  - id: NotificationService
+    version: 0.0.2
+  - id: OrdersService
+    version: 0.0.2
+badges:
+  - content: New domain
+    backgroundColor: blue
+    textColor: blue
+---
+
+## Overview
+
+The Orders domain handles all operations related to customer orders, from creation to fulfillment. This documentation provides an overview of the events and services involved in the Orders domain, helping developers and stakeholders understand the event-driven architecture.
+
+<Admonition type="warning">Please ensure all services are updated to the latest version for compatibility and performance improvements.</Admonition>
+
+## Bounded context
+
+<NodeGraph />
+
+### Order example (sequence diagram)
+
+```mermaid
+sequenceDiagram
+    participant Customer
+    participant OrdersService
+    participant InventoryService
+    participant NotificationService
+
+    Customer->>OrdersService: Place Order
+    OrdersService->>InventoryService: Check Inventory
+    InventoryService-->>OrdersService: Inventory Available
+    OrdersService->>InventoryService: Reserve Inventory
+    OrdersService->>NotificationService: Send Order Confirmation
+    NotificationService-->>Customer: Order Confirmation
+    OrdersService->>Customer: Order Placed Successfully
+    OrdersService->>InventoryService: Update Inventory
+```
+
+ 
+
+
+================================================================================
+File: domains/Payment/flows/PaymentProcessed/index.md
+Size: 2.12 kB
+================================================================================
+
+---
+id: PaymentFlow
+name: Payment Flow for customers
+version: 1.0.0
+summary: Business flow for processing payments in an e-commerce platform
+steps:
+    - id: "customer_place_order"
+      title: Customer places order
+      next_step: "place_order_request"
+    - id: "place_order_request"
+      title: Place order
+      message:
+        id: PlaceOrder
+        version: 0.0.1
+      next_step:
+        id: "payment_initiated"
+        label: Initiate payment
+    - id: "payment_initiated"
+      title: Payment Initiated
+      message:
+        id: PaymentInitiated
+        version: 0.0.1
+      next_steps:
+        - "payment_processed"
+        - "payment_failed"
+    - id: "payment_processed"
+      title: Payment Processed
+      message:
+        id: PaymentProcessed
+        version: 0.0.1
+      next_steps:
+        - id: "adjust_inventory"
+          label: Adjust inventory
+        - id: "send_custom_notification"
+          label: Notify customer
+    - id: "payment_failed"
+      title: Payment Failed
+      type: node
+      next_steps:
+        - id: "failure_notification"
+          label: Notify customer of failure
+        - id: "retry_payment"
+          label: Retry payment
+    - id: "adjust_inventory"
+      title: Inventory Adjusted
+      message:
+        id: InventoryAdjusted
+        version: 1.0.1
+      next_step:
+        id: "payment_complete"
+        label: Complete order
+    - id: "send_custom_notification"
+      title: Customer Notified of Payment
+      type: node
+      next_step:
+        id: "payment_complete"
+        label: Complete order
+    - id: "failure_notification"
+      title: Customer Notified of Failure
+      type: node
+    - id: "retry_payment"
+      title: Retry Payment
+      type: node
+      next_step:
+        id: "payment_initiated"
+        label: Retry payment process
+    - id: "payment_complete"
+      title: Payment Complete
+      message:
+        id: PaymentComplete
+        version: 0.0.2
+      next_step:
+        id: "order-complete"
+        label: Order completed
+    - id: "order-complete"
+      title: Order Completed
+      type: node
+---
+
+### Flow of feature
+<NodeGraph/>
+
+================================================================================
+File: domains/Payment/index.md
+Size: 640 B
+================================================================================
+
+---
+id: Payment
+name: Payment
+version: 0.0.1
+summary: |
+  Domain that contains payment related services and messages.
+owners:
+    - dboyne
+services:
+    - id: PaymentService
+      version: 0.0.1
+badges:
+    - content: Payment Domain
+      backgroundColor: blue
+      textColor: blue
+---
+
+## Overview
+
+The Payment Domain encompasses all services and components related to handling financial transactions within the system. It is responsible for managing payments, transactions, billing, and financial records. The domain ensures secure, reliable, and efficient processing of all payment-related activities
+
+## Bounded context
+
+<NodeGraph />
+
+
+================================================================================
+File: domains/Payment/services/PaymentService/events/PaymentInitiated/index.md
+Size: 1.27 kB
+================================================================================
+
+---
+id: PaymentInitiated
+name: Payment Initiated
+version: 0.0.1
+summary: Event is triggered when a user initiates a payment through the Payment Service
+owners:
+    - dboyne
+channels:
+  - id: payments.{env}.events
+    parameters:
+      env: staging
+---
+
+import Footer from '@catalog/components/footer.astro';
+
+## Overview
+
+The Payment Initiated event is triggered when a user initiates a payment through the Payment Service. This event signifies the beginning of the payment process and contains all necessary information to process the payment.
+
+<NodeGraph />
+
+### Payload Example
+
+```json title="Payload example"
+{
+  "userId": "123e4567-e89b-12d3-a456-426614174000",
+  "orderId": "789e1234-b56c-78d9-e012-3456789fghij",
+  "amount": 100.50,
+  "paymentMethod": "CreditCard",
+  "timestamp": "2024-07-04T14:48:00Z"
+}
+```
+
+### Security Considerations
+
+- **Authentication**: Ensure that only authenticated users can initiate a payment, and the userId in the payload matches the authenticated user.
+- **Data Validation**: Validate all input data to prevent injection attacks or other malicious input.
+- **Sensitive Data Handling**: Avoid including sensitive information (e.g., credit card numbers) in the event payload. Use secure channels and encryption for such data.
+
+<Footer />
+
+================================================================================
+File: domains/Payment/services/PaymentService/events/PaymentProcessed/index.md
+Size: 1.52 kB
+================================================================================
+
+---
+id: PaymentProcessed
+name: Payment Processed
+version: 1.0.0
+summary: Event is triggered after the payment has been successfully processed
+owners:
+    - dboyne
+channels:
+  - id: payments.{env}.events
+    parameters:
+      env: staging
+---
+
+import Footer from '@catalog/components/footer.astro';
+
+## Overview
+
+The PaymentProcessed event is triggered after the payment has been successfully processed by the Payment Service. This event signifies that a payment has been confirmed, and it communicates the outcome to other services and components within the system.
+
+<NodeGraph />
+
+### Payload Example
+
+```json title="Payload example"
+{
+  "transactionId": "123e4567-e89b-12d3-a456-426614174000",
+  "userId": "123e4567-e89b-12d3-a456-426614174000",
+  "orderId": "789e1234-b56c-78d9-e012-3456789fghij",
+  "amount": 100.50,
+  "paymentMethod": "CreditCard",
+  "status": "confirmed",
+  "confirmationDetails": {
+    "gatewayResponse": "Approved",
+    "transactionId": "abc123"
+  },
+  "timestamp": "2024-07-04T14:48:00Z"
+}
+```
+
+### Security Considerations
+
+- **Data Validation**: Ensure that all data in the event payload is validated before publishing to prevent injection attacks or other malicious activities.
+- **Sensitive Data Handling**: Avoid including sensitive information (e.g., full credit card numbers) in the event payload. Use secure channels and encryption for such data.
+- **Authentication and Authorization**: Ensure that only authorized services can publish or consume PaymentProcessed events.
+
+<Footer />
+
+================================================================================
+File: domains/Payment/services/PaymentService/events/PaymentProcessed/versioned/0.0.1/index.md
+Size: 1.44 kB
+================================================================================
+
+---
+id: PaymentProcessed
+name: Payment Processed
+version: 0.0.1
+summary: Event is triggered after the payment has been successfully processed
+owners:
+    - dboyne
+---
+
+import Footer from '@catalog/components/footer.astro';
+
+## Overview
+
+The PaymentProcessed event is triggered after the payment has been successfully processed by the Payment Service. This event signifies that a payment has been confirmed, and it communicates the outcome to other services and components within the system.
+
+<NodeGraph />
+
+### Payload Example
+
+```json title="Payload example"
+{
+  "transactionId": "123e4567-e89b-12d3-a456-426614174000",
+  "userId": "123e4567-e89b-12d3-a456-426614174000",
+  "orderId": "789e1234-b56c-78d9-e012-3456789fghij",
+  "amount": 100.50,
+  "paymentMethod": "CreditCard",
+  "status": "confirmed",
+  "confirmationDetails": {
+    "gatewayResponse": "Approved",
+    "transactionId": "abc123"
+  },
+  "timestamp": "2024-07-04T14:48:00Z"
+}
+```
+
+### Security Considerations
+
+- **Data Validation**: Ensure that all data in the event payload is validated before publishing to prevent injection attacks or other malicious activities.
+- **Sensitive Data Handling**: Avoid including sensitive information (e.g., full credit card numbers) in the event payload. Use secure channels and encryption for such data.
+- **Authentication and Authorization**: Ensure that only authorized services can publish or consume PaymentProcessed events.
+
+<Footer />
+
+================================================================================
+File: domains/Payment/services/PaymentService/index.md
+Size: 1.2 kB
+================================================================================
+
+---
+id: PaymentService
+name: Payment Service
+version: 0.0.1
+summary: |
+  Service that handles payments
+owners:
+    - dboyne
+receives:
+  - id: PaymentInitiated
+    version: 0.0.1
+  - id: GetPaymentStatus
+sends:
+  - id: PaymentProcessed
+    version: 0.0.1
+  - id: GetOrder
+repository:
+  language: JavaScript
+  url: https://github.com/event-catalog/pretend-shipping-service
+---
+
+The Payment Service is a crucial component of our system that handles all payment-related operations. It processes payments, manages transactions, and communicates with other services through events. Using an event-driven architecture, it ensures that all actions are asynchronous, decoupled, and scalable.
+
+<NodeGraph />
+
+### Key Components
+- Payment API: Exposes endpoints for initiating payments and querying payment status.
+- Payment Processor: Handles the core payment processing logic.
+- Event Bus: Manages the communication between services using events.
+- Payment Gateway: Interfaces with external payment providers.
+- Transaction Service: Manages transaction records and states.
+- Notification Service: Sends notifications related to payment status changes.
+- Database: Stores transaction data and payment status.
+
+================================================================================
+File: domains/Payment/services/PaymentService/queries/GetPaymentStatus/index.md
+Size: 1.13 kB
+================================================================================
+
+---
+id: GetPaymentStatus
+name: Get payment status
+version: 0.0.1
+summary: |
+  GET request that will return the payment status for a specific order, identified by its orderId.
+owners:
+    - dboyne
+badges:
+    - content: Recently updated!
+      backgroundColor: green
+      textColor: green
+schemaPath: schema.json
+---
+
+import Footer from '@catalog/components/footer.astro';
+
+## Overview
+
+The `GetPaymentStatus` message is a query used to retrieve the payment status for a specific order, identified by its `orderId`. This query returns the current status of the payment, such as whether it is pending, completed, failed, or refunded. It is used by systems that need to track the lifecycle of payments associated with orders, ensuring that the payment has been successfully processed or identifying if any issues occurred during the transaction.
+
+This query is useful in scenarios such as order management, refund processing, or payment auditing, ensuring that users or systems have real-time visibility into the payment status for a given order.
+
+<NodeGraph />
+
+<SchemaViewer file="schema.json" title="JSON Schema" maxHeight="500" />
+
+================================================================================
+File: domains/Payment/services/PaymentService/queries/GetPaymentStatus/schema.json
+Size: 1.24 kB
+================================================================================
+
+
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "GetPaymentStatusResponse",
+  "type": "object",
+  "properties": {
+    "orderId": {
+      "type": "string",
+      "description": "The unique identifier for the order."
+    },
+    "paymentStatus": {
+      "type": "string",
+      "enum": ["pending", "completed", "failed", "refunded"],
+      "description": "The current payment status of the order."
+    },
+    "amount": {
+      "type": "number",
+      "description": "The amount paid for the order."
+    },
+    "currency": {
+      "type": "string",
+      "description": "The currency in which the payment was made (e.g., USD, EUR)."
+    },
+    "paymentMethod": {
+      "type": "string",
+      "description": "The payment method used for the transaction (e.g., Credit Card, PayPal)."
+    },
+    "transactionId": {
+      "type": "string",
+      "description": "The unique identifier for the payment transaction."
+    },
+    "paymentDate": {
+      "type": "string",
+      "format": "date-time",
+      "description": "The date and time when the payment was processed."
+    }
+  },
+  "required": ["orderId", "paymentStatus", "amount", "currency", "paymentMethod", "transactionId", "paymentDate"],
+  "additionalProperties": false
+}
+
+
+================================================================================
+File: domains/Subscriptions/flows/CancelSubscription/index.md
+Size: 1.76 kB
+================================================================================
+
+---
+id: "CancelSubscription"
+name: "User Cancels Subscription"
+version: "1.0.0"
+summary: "Flow for when a user has cancelled a subscription"
+steps:
+  - id: "cancel_subscription_initiated"
+    title: "Cancels Subscription"
+    summary: "User cancels their subscription"
+    actor:
+      name: "User"
+    next_step: 
+      id: "cancel_subscription_request"
+      label: "Initiate subscription cancellation"
+
+  - id: "cancel_subscription_request"
+    title: "Cancel Subscription"
+    message:
+      id: "CancelSubscription"
+      version: "0.0.1"
+    next_step: 
+      id: "subscription_service"
+      label: "Proceed to subscription service"
+
+  - id: "stripe_integration"
+    title: "Stripe"
+    externalSystem:
+      name: "Stripe"
+      summary: "3rd party payment system"
+      url: "https://stripe.com/"
+    next_step: 
+      id: "subscription_service"
+      label: "Return to subscription service"
+
+  - id: "subscription_service"
+    title: "Subscription Service"
+    service:
+      id: "SubscriptionService"
+      version: "0.0.1"
+    next_steps:
+      - id: "stripe_integration"
+        label: "Cancel subscription via Stripe"
+      - id: "subscription_cancelled"
+        label: "Successful cancellation"
+      - id: "subscription_rejected"
+        label: "Failed cancellation"
+
+  - id: "subscription_cancelled"
+    title: "Subscription has been Cancelled"
+    message:
+      id: "UserSubscriptionCancelled"
+      version: "0.0.1"
+    next_step:
+      id: "notification_service"
+      label: "Email customer"
+
+  - id: "subscription_rejected"
+    title: "Subscription cancellation has been rejected"
+
+  - id: "notification_service"
+    title: "Notifications Service"
+    service:
+      id: "NotificationService"
+      version: "0.0.2"
+
+---
+
+<NodeGraph />
+
+
+================================================================================
+File: domains/Subscriptions/flows/CancelSubscription/versioned/0.0.1/index.md
+Size: 1.3 kB
+================================================================================
+
+---
+id: "CancelSubscription"
+name: "User Cancels Subscription"
+version: "0.0.1"
+summary: "Flow for when a user has cancelled a subscription"
+steps:
+  - id: "cancel_subscription_initiated"
+    title: "Cancels Subscription"
+    summary: "User cancels their subscription"
+    actor:
+      name: "User"
+    next_step: 
+      id: "cancel_subscription_request"
+      label: "Initiate subscription cancellation"
+
+  - id: "cancel_subscription_request"
+    title: "Cancel Subscription"
+    message:
+      id: "CancelSubscription"
+      version: "0.0.1"
+    next_step: 
+      id: "subscription_service"
+      label: "Proceed to subscription service"
+
+  - id: "stripe_integration"
+    title: "Stripe"
+    externalSystem:
+      name: "Stripe"
+      summary: "3rd party payment system"
+      url: "https://stripe.com/"
+    next_step: 
+      id: "subscription_service"
+      label: "Return to subscription service"
+
+  - id: "subscription_service"
+    title: "Subscription Service"
+    service:
+      id: "SubscriptionService"
+      version: "0.0.1"
+    next_steps:
+      - id: "stripe_integration"
+        label: "Cancel subscription via Stripe"
+      - id: "subscription_cancelled"
+        label: "Successful cancellation"
+      - id: "subscription_rejected"
+        label: "Failed cancellation"
+---
+
+<NodeGraph />
+
+
+================================================================================
+File: domains/Subscriptions/index.md
+Size: 660 B
+================================================================================
+
+---
+id: Subscription
+name: Subscription
+version: 0.0.1
+summary: |
+  Domain that contains subscription related services and messages.
+owners:
+    - dboyne
+services:
+    - id: SubscriptionService
+      version: 0.0.1
+badges:
+    - content: Payment Domain
+      backgroundColor: blue
+      textColor: blue
+---
+
+## Overview
+
+The Payment Domain encompasses all services and components related to handling financial transactions within the system. It is responsible for managing payments, transactions, billing, and financial records. The domain ensures secure, reliable, and efficient processing of all payment-related activities
+
+## Bounded context
+
+<NodeGraph />
+
+
+================================================================================
+File: domains/Subscriptions/services/SubscriptionService/commands/CancelSubscription/index.md
+Size: 443 B
+================================================================================
+
+---
+id: CancelSubscription
+name: Cancel subscription
+version: 0.0.1
+summary: |
+  Command that will try and cancel a users subscription
+owners:
+    - dboyne
+badges:
+    - content: New!
+      backgroundColor: green
+      textColor: green
+---
+
+import Footer from '@catalog/components/footer.astro';
+
+## Overview
+
+The `CancelSubscription` command will try and cancel a subscription for the user.
+
+## Architecture diagram
+
+<NodeGraph />
+
+<Footer />
+
+================================================================================
+File: domains/Subscriptions/services/SubscriptionService/commands/SubscribeUser/index.md
+Size: 436 B
+================================================================================
+
+---
+id: SubscribeUser
+name: Subscribe user
+version: 0.0.1
+summary: |
+  Command that will try and subscribe a given user
+owners:
+    - dboyne
+badges:
+    - content: New!
+      backgroundColor: green
+      textColor: green
+---
+
+import Footer from '@catalog/components/footer.astro';
+
+## Overview
+
+The `SubscribeUser` command represents when a new user wants to subscribe to our service.
+
+## Architecture diagram
+
+<NodeGraph />
+
+<Footer />
+
+================================================================================
+File: domains/Subscriptions/services/SubscriptionService/events/UserSubscriptionCancelled/index.md
+Size: 491 B
+================================================================================
+
+---
+id: UserSubscriptionCancelled
+name: User subscription cancelled
+version: 0.0.1
+summary: |
+  An event that is triggered when a users subscription has been cancelled
+owners:
+    - dboyne
+badges:
+    - content: New!
+      backgroundColor: green
+      textColor: green
+---
+
+import Footer from '@catalog/components/footer.astro';
+
+## Overview
+
+The `UserSubscriptionCancelled` event is triggered when a users subscription has been cancelled.
+
+## Architecture diagram
+
+<NodeGraph />
+
+<Footer />
+
+================================================================================
+File: domains/Subscriptions/services/SubscriptionService/events/UserSubscriptionStarted/index.md
+Size: 491 B
+================================================================================
+
+---
+id: UserSubscriptionStarted
+name: User subscription started
+version: 0.0.1
+summary: |
+  An event that is triggered when a new user subscription has started
+owners:
+    - dboyne
+badges:
+    - content: New!
+      backgroundColor: green
+      textColor: green
+---
+
+import Footer from '@catalog/components/footer.astro';
+
+## Overview
+
+The `UserSubscriptionStarted` event is triggered when a user starts a new subscription with our service.
+
+## Architecture diagram
+
+<NodeGraph />
+
+<Footer />
+
+================================================================================
+File: domains/Subscriptions/services/SubscriptionService/index.md
+Size: 1.6 kB
+================================================================================
+
+---
+id: SubscriptionService
+version: 0.0.1
+name: Subscription Service
+summary: |
+  Service that handles subscriptions
+owners:
+    - dboyne
+receives:
+  - id: SubscribeUser
+    version: 0.0.1
+  - id: CancelSubscription
+    version: 0.0.1
+  - id: GetSubscriptionStatus  
+sends:
+  - id: UserSubscriptionStarted
+    version: 0.0.1
+  - id: UserSubscriptionCancelled  
+    version: 0.0.1
+repository:
+  language: JavaScript
+  url: https://github.com/event-catalog/pretend-subscription-service
+---
+
+import Footer from '@catalog/components/footer.astro';
+
+## Overview
+
+The subscription Service is responsible for handling customer subscriptions in our system. It handles new subscriptions, cancelling subscriptions and updating them.
+
+<Tiles >
+    <Tile icon="DocumentIcon" href={`/docs/services/${frontmatter.id}/${frontmatter.version}/changelog`}  title="View the changelog" description="Want to know the history of this service? View the change logs" />
+    <Tile icon="UserGroupIcon" href="/docs/teams/full-stack" title="Contact the team" description="Any questions? Feel free to contact the owners" />
+    <Tile icon="BoltIcon" href={`/visualiser/services/${frontmatter.id}/${frontmatter.version}`} title={`Sends ${frontmatter.sends.length} messages`} description="This service sends messages to downstream consumers" />
+    <Tile icon="BoltIcon"  href={`/visualiser/services/${frontmatter.id}/${frontmatter.version}`} title={`Receives ${frontmatter.receives.length} messages`} description="This service receives messages from other services" />
+</Tiles>
+
+## Architecture diagram 
+
+<NodeGraph />
+
+<Footer />
+
+================================================================================
+File: domains/Subscriptions/services/SubscriptionService/queries/GetSubscriptionStatus/index.md
+Size: 1.22 kB
+================================================================================
+
+---
+id: GetSubscriptionStatus
+name: Get subscription status
+version: 0.0.2
+summary: |
+  GET request that will return the current subscription status for a specific user, identified by their userId.
+owners:
+    - dboyne
+badges:
+    - content: Recently updated!
+      backgroundColor: green
+      textColor: green
+schemaPath: schema.json
+---
+
+import Footer from '@catalog/components/footer.astro';
+
+## Overview
+
+The `GetSubscriptionStatus` message is a query used to retrieve the current subscription status for a specific user, identified by their `userId`. This query returns detailed information about the user's subscription, such as its current status (active, canceled, expired), the subscription tier or plan, and the next billing date. It is typically used by systems that manage user subscriptions, billing, and renewal processes to ensure that users are aware of their subscription details and any upcoming renewals.
+
+This query is particularly useful in managing subscriptions for SaaS products, media services, or any recurring payment-based services where users need to manage and view their subscription information.
+
+<NodeGraph />
+
+<SchemaViewer file="schema.json" title="JSON Schema" maxHeight="500" />
+
+================================================================================
+File: domains/Subscriptions/services/SubscriptionService/queries/GetSubscriptionStatus/schema.json
+Size: 1.47 kB
+================================================================================
+
+
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "GetSubscriptionStatusResponse",
+  "type": "object",
+  "properties": {
+    "userId": {
+      "type": "string",
+      "description": "The unique identifier for the user."
+    },
+    "subscriptionStatus": {
+      "type": "string",
+      "enum": ["active", "canceled", "expired", "pending"],
+      "description": "The current status of the user's subscription."
+    },
+    "subscriptionPlan": {
+      "type": "string",
+      "description": "The name or tier of the subscription plan."
+    },
+    "nextBillingDate": {
+      "type": "string",
+      "format": "date-time",
+      "description": "The date and time of the next billing or renewal."
+    },
+    "billingFrequency": {
+      "type": "string",
+      "enum": ["monthly", "yearly"],
+      "description": "The frequency of the billing cycle."
+    },
+    "amount": {
+      "type": "number",
+      "description": "The amount to be billed for the subscription."
+    },
+    "currency": {
+      "type": "string",
+      "description": "The currency in which the subscription is billed (e.g., USD, EUR)."
+    },
+    "lastPaymentDate": {
+      "type": "string",
+      "format": "date-time",
+      "description": "The date and time when the last payment was processed."
+    }
+  },
+  "required": ["userId", "subscriptionStatus", "subscriptionPlan", "nextBillingDate", "billingFrequency", "amount", "currency", "lastPaymentDate"],
+  "additionalProperties": false
+}
+
+
+================================================================================
+File: domains/Subscriptions/services/SubscriptionService/queries/GetSubscriptionStatus/versioned/0.0.1/index.md
+Size: 1.22 kB
+================================================================================
+
+---
+id: GetSubscriptionStatus
+name: Get subscription status
+version: 0.0.1
+summary: |
+  GET request that will return the current subscription status for a specific user, identified by their userId.
+owners:
+    - dboyne
+badges:
+    - content: Recently updated!
+      backgroundColor: green
+      textColor: green
+schemaPath: schema.json
+---
+
+import Footer from '@catalog/components/footer.astro';
+
+## Overview
+
+The `GetSubscriptionStatus` message is a query used to retrieve the current subscription status for a specific user, identified by their `userId`. This query returns detailed information about the user's subscription, such as its current status (active, canceled, expired), the subscription tier or plan, and the next billing date. It is typically used by systems that manage user subscriptions, billing, and renewal processes to ensure that users are aware of their subscription details and any upcoming renewals.
+
+This query is particularly useful in managing subscriptions for SaaS products, media services, or any recurring payment-based services where users need to manage and view their subscription information.
+
+<NodeGraph />
+
+<SchemaViewer file="schema.json" title="JSON Schema" maxHeight="500" />
+
+================================================================================
+File: domains/Subscriptions/services/SubscriptionService/queries/GetSubscriptionStatus/versioned/0.0.1/schema.json
+Size: 1.47 kB
+================================================================================
+
+
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "GetSubscriptionStatusResponse",
+  "type": "object",
+  "properties": {
+    "userId": {
+      "type": "string",
+      "description": "The unique identifier for the user."
+    },
+    "subscriptionStatus": {
+      "type": "string",
+      "enum": ["active", "canceled", "expired", "pending"],
+      "description": "The current status of the user's subscription."
+    },
+    "subscriptionPlan": {
+      "type": "string",
+      "description": "The name or tier of the subscription plan."
+    },
+    "nextBillingDate": {
+      "type": "string",
+      "format": "date-time",
+      "description": "The date and time of the next billing or renewal."
+    },
+    "billingFrequency": {
+      "type": "string",
+      "enum": ["monthly", "yearly"],
+      "description": "The frequency of the billing cycle."
+    },
+    "amount": {
+      "type": "number",
+      "description": "The amount to be billed for the subscription."
+    },
+    "currency": {
+      "type": "string",
+      "description": "The currency in which the subscription is billed (e.g., USD, EUR)."
+    },
+    "lastPaymentDate": {
+      "type": "string",
+      "format": "date-time",
+      "description": "The date and time when the last payment was processed."
+    }
+  },
+  "required": ["userId", "subscriptionStatus", "subscriptionPlan", "nextBillingDate", "billingFrequency", "amount", "currency", "lastPaymentDate"],
+  "additionalProperties": false
+}
+
+
+================================================================================
+File: eventcatalog.config.js
+Size: 870 B
+================================================================================
+
+/** @type {import('@eventcatalog/core/bin/eventcatalog.config').Config} */
+export default {
+  title: 'EventCatalog',
+  tagline: 'Discover, Explore and Document your Event Driven Architectures',
+  organizationName: 'EventCatalog Ltd',
+  homepageLink: 'https://eventcatalog.dev/',
+  editUrl: 'https://github.com/boyney123/eventcatalog-demo/edit/master',
+  // By default set to false, add true to get urls ending in /
+  trailingSlash: false,
+  // Change to make the base url of the site different, by default https://{website}.com/docs,
+  // changing to /company would be https://{website}.com/company/docs,
+  base: '/',
+  // Customize the logo, add your logo to public/ folder
+  logo: {
+    alt: 'EventCatalog Logo',
+    src: '/logo.png',
+    text: 'EventCatalog'
+  },
+  // required random generated id used by eventcatalog
+  cId: '433b38e6-b553-407f-93bf-c6f12d8ba4cd'
+}
+
+
+================================================================================
+File: eventcatalog.styles.css
+Size: 41 B
+================================================================================
+
+/* Custom styling support coming soon. */
+
+================================================================================
+File: package.json
+Size: 387 B
+================================================================================
+
+{
+  "name": "my-catalog",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "eventcatalog dev",
+    "build": "eventcatalog build",
+    "start": "eventcatalog start",
+    "preview": "eventcatalog preview",
+    "generate": "eventcatalog generate",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "@eventcatalog/core": "2.14.2"
+  }
+}
+
+
+================================================================================
+File: pages/index.md
+Size: 1.45 kB
+================================================================================
+
+---
+id: index
+---
+
+# **EventCatalog**
+
+Welcome to [EventCatalog](https://www.eventcatalog.dev/).
+
+This open-source project is designed to help you and your teams bring discoverability and clarity to your event-driven architectures (EDA).
+
+To get started you can read the following guides:
+
+* [Getting started with EventCatalog](https://eventcatalog.dev/docs/development/getting-started/introduction)  
+* [Creating domains](https://eventcatalog.dev/docs/development/guides/domains/adding-domains)  
+* [Creating services](https://eventcatalog.dev/docs/development/guides/services/adding-services)  
+* [Creating commands](https://eventcatalog.dev/docs/development/guides/messages/commands/introduction)  
+* [Creating events](https://eventcatalog.dev/docs/development/guides/messages/events/introduction)  
+* [Assigning owners to resources](https://eventcatalog.dev/docs/owners)  
+* [Using components in your pages (Schemas, OpenAPI, etc)](https://eventcatalog.dev/docs/development/components/using-components)  
+* [Deploying and hosting your EventCatalog](https://eventcatalog.dev/docs/development/deployment)
+
+### **Join the community**
+
+Got questions about EventCatalog? Feature requests or need support? [Join our community on Discord.](https://discord.gg/3rjaZMmrAm)
+
+### **Enterprise support**
+
+Using EventCatalog and needs enterprise support? Work with us, find out what we offer on our [enterprise page](https://eventcatalog.dev/enterprise).
+
+
+================================================================================
+File: teams/full-stack.md
+Size: 1.44 kB
+================================================================================
+
+---
+id: full-stack
+name: Full stackers
+summmary: Full stack developers based in London, UK
+members:
+    - dboyne
+    - asmith
+    - msmith
+email: test@test.com
+slackDirectMessageUrl: https://yourteam.slack.com/channels/boyney123
+---
+
+## Overview
+
+The Full Stack Team is responsible for developing and maintaining both the front-end and back-end components of our applications. This team ensures that the user interfaces are intuitive and responsive, and that the server-side logic and database interactions are efficient and secure. The Full Stack Team handles the entire lifecycle of web applications, from initial development to deployment and ongoing maintenance.
+
+## Responsibilities
+
+### Key Responsibilities
+- **Front-End Development**: Design and implement user interfaces using modern web technologies (e.g., HTML, CSS, JavaScript, React).
+- **Back-End Development**: Develop and maintain server-side logic, APIs, and database interactions (e.g., Node.js, Express, SQL/NoSQL databases).
+- **Integration**: Ensure seamless communication between the front-end and back-end components.
+- **Performance Optimization**: Optimize the performance and scalability of web applications.
+- **Testing and Debugging**: Write and maintain unit, integration, and end-to-end tests to ensure the quality and reliability of the applications.
+- **Deployment**: Manage the deployment of applications to production environments using CI/CD pipelines.
+
+
+
+================================================================================
+File: teams/mobile-devs.md
+Size: 1.15 kB
+================================================================================
+
+---
+id: mobile-devs
+name: The mobile devs
+members:
+    - dboyne
+---
+
+The Mobile Devs team is responsible for the development and maintenance of the mobile applications for our company. This includes the iOS and Android apps that customers use to interact with our services, make purchases, and manage their accounts. The team ensures that the mobile apps are user-friendly, secure, and performant.
+
+## Responsibilities
+
+### 1. Mobile Application Development
+- **Platform Support**: Developing and maintaining apps for iOS and Android platforms.
+- **Feature Implementation**: Implementing new features based on product requirements and user feedback.
+- **User Interface Design**: Ensuring a consistent and intuitive user interface across all mobile platforms.
+- **Performance Optimization**: Optimizing the performance of mobile apps to ensure fast and smooth user experiences.
+
+### 2. Integration with Backend Services
+- **API Integration**: Integrating mobile apps with backend services using RESTful APIs and other communication protocols.
+- **Real-time Updates**: Implementing real-time data updates and synchronization with backend services.
+
+================================================================================
+File: users/aSmith.md
+Size: 2.08 kB
+================================================================================
+
+---
+id: asmith
+name: Amy Smith
+avatarUrl: https://randomuser.me/api/portraits/women/48.jpg
+role: Product owner
+---
+
+Hello! I'm Amy Smith, the Product Owner of the innovative Full Stackers team. With a strong focus on delivering exceptional value, I specialize in connecting business objectives with technical solutions to create products that users love.
+
+### About Me
+
+With a comprehensive background in product management and a solid understanding of software development, I bring a unique perspective to the table. My career has been driven by a passion for understanding user needs, defining clear product visions, and leading teams to successful product deliveries.
+
+### What I Do
+
+As the Product Owner for Full Stackers, my role involves a wide range of responsibilities aimed at ensuring our products are both high-quality and user-centric. Key aspects of my role include:
+
+- **Product Vision & Strategy**: Defining and communicating the long-term vision and strategy for our products, ensuring alignment with the company's objectives and market demands.
+- **Roadmap Planning**: Developing and maintaining a product roadmap that highlights key features and milestones, prioritizing tasks based on their business value and user feedback.
+- **Stakeholder Management**: Engaging with stakeholders across the organization to gather requirements, provide updates, and ensure everyone is aligned on the product's direction.
+- **User-Centric Design**: Championing the end-users by conducting user research, analyzing feedback, and ensuring our products effectively solve their problems.
+- **Agile Leadership**: Leading the development process using Agile methodologies, facilitating sprint planning, and ensuring the team has clear priorities and objectives.
+
+My mission is to deliver products that not only meet but exceed customer expectations. I thrive on the challenge of translating complex requirements into simple, intuitive solutions.
+
+If you’re interested in product management, user experience, or discussing the latest trends in technology, feel free to reach out!
+
+
+
+================================================================================
+File: users/dboyne.md
+Size: 2.08 kB
+================================================================================
+
+---
+id: dboyne
+name: David Boyne
+avatarUrl: "https://pbs.twimg.com/profile_images/1262283153563140096/DYRDqKg6_400x400.png"
+role: Lead developer
+email: test@test.com
+slackDirectMessageUrl: https://yourteam.slack.com/channels/boyney123
+---
+
+Hello! I'm David Boyne, the Tech Lead of an amazing team called Full Stackers. With a passion for building robust and scalable systems, I specialize in designing and implementing event-driven architectures that power modern, responsive applications.
+
+### About Me
+
+With over a decade of experience in the tech industry, I have honed my skills in full-stack development, cloud computing, and distributed systems. My journey has taken me through various roles, from software engineer to architect, and now as a tech lead, I am committed to driving innovation and excellence within my team.
+
+### What I Do
+
+At Full Stackers, we focus on creating seamless and efficient event-driven architectures that enhance the performance and scalability of our applications. My role involves:
+
+- **Architecture Design**: Crafting scalable and resilient system architectures using event-driven paradigms.
+- **Team Leadership**: Guiding a talented team of developers, fostering a collaborative and innovative environment.
+- **Code Reviews & Mentorship**: Ensuring code quality and sharing knowledge to help the team grow.
+- **Stakeholder Collaboration**: Working closely with other teams and stakeholders to align our technical solutions with business goals.
+- **Continuous Improvement**: Advocating for best practices in software development, deployment, and monitoring.
+
+I am passionate about leveraging the power of events to build systems that are not only highly responsive but also easier to maintain and extend. In an ever-evolving tech landscape, I strive to stay ahead of the curve, continuously learning and adapting to new technologies and methodologies.
+
+Feel free to connect with me to discuss all things tech, event-driven architectures, or to exchange ideas on building better software systems!
+
+---
+*David Boyne*
+*Tech Lead, Full Stackers*
+
+
+================================================================================
+File: users/mSmith.md
+Size: 612 B
+================================================================================
+
+---
+id: msmith
+name: Martin Smith
+avatarUrl: "https://randomuser.me/api/portraits/men/51.jpg"
+role: Senior software engineer
+---
+
+As a Senior Mobile Developer on The Mobile Devs team, I play a key role in designing, developing, and maintaining our company’s mobile applications. My focus is on creating a seamless and intuitive user experience for our customers on both iOS and Android platforms. I work closely with cross-functional teams, including backend developers, UX/UI designers, and product managers, to deliver high-quality mobile solutions that meet business objectives and exceed user expectations.
